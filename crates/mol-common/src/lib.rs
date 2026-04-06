@@ -16,6 +16,7 @@
 //! | [`writing_guide`] | Static knowledge base of conference writing tips |
 
 pub mod adapters;
+pub mod codebase_manifest;
 pub mod hardware;
 pub mod prompts;
 pub mod quality;
