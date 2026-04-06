@@ -13,6 +13,7 @@
 //! | [`hardware`] | Local hardware detection (GPU / MPS / CPU) |
 //! | [`sanitize`] | Text sanitization: thinking-tag stripping, API key redaction, filename cleaning |
 //! | [`adapters`] | Typed adapter traits and deterministic recording stubs for testing |
+//! | [`writing_guide`] | Static knowledge base of conference writing tips |
 
 pub mod adapters;
 pub mod hardware;
@@ -20,6 +21,7 @@ pub mod prompts;
 pub mod quality;
 pub mod sanitize;
 pub mod types;
+pub mod writing_guide;
 
 // ---------------------------------------------------------------------------
 // Convenience re-exports — the most commonly used items are available
@@ -47,6 +49,9 @@ pub use sanitize::{
 
 // Prompts
 pub use prompts::PromptEngine;
+
+// Writing Guide
+pub use writing_guide::format_writing_tips;
 
 // Adapters
 pub use adapters::{
