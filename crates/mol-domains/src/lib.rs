@@ -32,6 +32,7 @@
 
 pub mod adapters;
 pub mod detector;
+pub mod experiment_schema;
 pub mod profile;
 
 // ---------------------------------------------------------------------------
@@ -45,6 +46,11 @@ pub use adapters::{
 };
 
 pub use detector::{detect_domain, detect_domain_with_llm, domain_keywords};
+
+pub use experiment_schema::{
+    from_legacy_exp_plan, Condition, ConditionRole, EvaluationSpec, ExperimentType, MetricSpec,
+    UniversalExperimentPlan,
+};
 
 pub use profile::{
     load_profile, DomainMetric, DomainProfile, ExperimentParadigm, MetricType, ResearchDomain,
