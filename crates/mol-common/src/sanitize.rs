@@ -1,8 +1,8 @@
 //! Input sanitization utilities for untrusted LLM-generated values.
 //!
 //! Combines two Python modules:
-//! - `researchclaw/utils/sanitize.py` — figure ID and filename sanitization
-//! - `researchclaw/utils/thinking_tags.py` — stripping reasoning artifacts
+//! - `mol/utils/sanitize.py` — figure ID and filename sanitization
+//! - `mol/utils/thinking_tags.py` — stripping reasoning artifacts
 //!   from LLM output before they contaminate paper drafts, code, or YAML.
 
 use std::sync::LazyLock;

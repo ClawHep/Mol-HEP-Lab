@@ -1,6 +1,6 @@
 //! `mol setup` — Check and install optional tools.
 //!
-//! Ports `cmd_setup` from `backend/agent/researchclaw/cli.py`.
+//! Ports `cmd_setup` from `backend/agent/mol/cli.py`.
 
 use anyhow::Result;
 use clap::Args;

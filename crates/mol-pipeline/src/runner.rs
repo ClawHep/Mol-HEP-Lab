@@ -1,7 +1,7 @@
 //! Pipeline orchestration: sequential stage loop with checkpoint, gate, and
 //! decision-rollback handling.
 //!
-//! Ported from `backend/agent/researchclaw/pipeline/runner.py`.
+//! Ported from `backend/agent/mol/pipeline/runner.py`.
 
 use crate::checkpoint::{read_checkpoint, resume_from_checkpoint, write_checkpoint, write_heartbeat};
 use crate::executor::{execute_stage, MolConfig, StageContext, StageResult};

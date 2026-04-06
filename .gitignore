@@ -28,7 +28,7 @@ backend/agent/artifacts/
 backend/agent/docs/kb/
 backend/agent/deliverables/
 backend/agent/.claude
-backend/agent/.researchclaw_cache
+backend/agent/.molheplab_cache
 backend/agent/.researchmol_cache
 
 # ── IDE ──

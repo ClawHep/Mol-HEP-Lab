@@ -1,6 +1,6 @@
 //! `mol run` — Execute the research pipeline.
 //!
-//! Ports `cmd_run` from `backend/agent/researchclaw/cli.py`.
+//! Ports `cmd_run` from `backend/agent/mol/cli.py`.
 
 use anyhow::{bail, Result};
 use clap::Args;

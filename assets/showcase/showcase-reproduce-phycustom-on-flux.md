@@ -113,4 +113,4 @@ PhyCustom studies whether customized concepts can preserve **physical properties
 
 ---
 
-*Generated end-to-end by Claw AI Lab pipeline · Reproduce track · S9 → S22 fully autonomous*
+*Generated end-to-end by Mol-HEP-Lab pipeline · Reproduce track · S9 → S22 fully autonomous*

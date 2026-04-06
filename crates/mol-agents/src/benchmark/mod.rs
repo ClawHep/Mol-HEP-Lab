@@ -5,7 +5,7 @@
 //!
 //! Produces a [`BenchmarkPlan`] consumed by experiment design and code
 //! generation stages.  Mirrors
-//! `backend/agent/researchclaw/agents/benchmark_agent/orchestrator.py`.
+//! `backend/agent/mol/agents/benchmark_agent/orchestrator.py`.
 
 pub mod acquirer;
 pub mod selector;

@@ -3,7 +3,7 @@
 //! Orchestrates GitHub search, repository analysis, pattern extraction, and
 //! result caching so that code generation stages have real reference material.
 //!
-//! Mirrors `backend/agent/researchclaw/agents/code_searcher/agent.py`.
+//! Mirrors `backend/agent/mol/agents/code_searcher/agent.py`.
 
 pub mod cache;
 pub mod github_client;

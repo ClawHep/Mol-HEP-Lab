@@ -5,7 +5,7 @@
 //! (Image: **NanoBanana**) → **Integrator**
 //!
 //! Produces a [`FigurePlan`] consumed by paper drafting and export stages.
-//! Mirrors `backend/agent/researchclaw/agents/figure_agent/orchestrator.py`.
+//! Mirrors `backend/agent/mol/agents/figure_agent/orchestrator.py`.
 
 pub mod codegen;
 pub mod critic;

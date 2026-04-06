@@ -4,7 +4,7 @@
 
 profiles:
   ml_base:
-    image: "researchclaw/sandbox-ml:latest"
+    image: "molheplab/sandbox-ml:latest"
     packages:
       - torch
       - torchvision
@@ -21,7 +21,7 @@ profiles:
     memory_limit_mb: 8192
 
   physics:
-    image: "researchclaw/sandbox-physics:latest"
+    image: "molheplab/sandbox-physics:latest"
     packages:
       - numpy
       - scipy
@@ -33,7 +33,7 @@ profiles:
     memory_limit_mb: 4096
 
   chemistry:
-    image: "researchclaw/sandbox-chemistry:latest"
+    image: "molheplab/sandbox-chemistry:latest"
     packages:
       - pyscf
       - rdkit
@@ -45,7 +45,7 @@ profiles:
     memory_limit_mb: 4096
 
   biology:
-    image: "researchclaw/sandbox-biology:latest"
+    image: "molheplab/sandbox-biology:latest"
     packages:
       - scanpy
       - anndata
@@ -59,7 +59,7 @@ profiles:
     memory_limit_mb: 16384
 
   economics:
-    image: "researchclaw/sandbox-economics:latest"
+    image: "molheplab/sandbox-economics:latest"
     packages:
       - statsmodels
       - linearmodels
@@ -71,7 +71,7 @@ profiles:
     memory_limit_mb: 4096
 
   math:
-    image: "researchclaw/sandbox-math:latest"
+    image: "molheplab/sandbox-math:latest"
     packages:
       - numpy
       - scipy
@@ -82,7 +82,7 @@ profiles:
     memory_limit_mb: 4096
 
   security:
-    image: "researchclaw/sandbox-security:latest"
+    image: "molheplab/sandbox-security:latest"
     packages:
       - scikit-learn
       - xgboost
@@ -94,7 +94,7 @@ profiles:
     network: "none"
 
   robotics:
-    image: "researchclaw/sandbox-robotics:latest"
+    image: "molheplab/sandbox-robotics:latest"
     packages:
       - gymnasium
       - mujoco
@@ -106,7 +106,7 @@ profiles:
     memory_limit_mb: 8192
 
   generic:
-    image: "researchclaw/sandbox-generic:latest"
+    image: "molheplab/sandbox-generic:latest"
     packages:
       - numpy
       - scipy

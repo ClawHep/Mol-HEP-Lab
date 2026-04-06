@@ -1,6 +1,6 @@
 //! `mol init` — Create config.mol.yaml from the example template.
 //!
-//! Ports `cmd_init` from `backend/agent/researchclaw/cli.py`.
+//! Ports `cmd_init` from `backend/agent/mol/cli.py`.
 
 use anyhow::Result;
 use clap::Args;

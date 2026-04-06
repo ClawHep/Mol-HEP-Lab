@@ -3,7 +3,7 @@
 //! Detects NVIDIA CUDA GPUs (via `nvml-wrapper`), Apple Silicon MPS (via
 //! `sysinfo` + `uname`), and falls back to CPU-only.
 //!
-//! Ported from Python `researchclaw/hardware.py`.
+//! Ported from Python `mol/hardware.py`.
 
 use serde::{Deserialize, Serialize};
 use std::process::Command;

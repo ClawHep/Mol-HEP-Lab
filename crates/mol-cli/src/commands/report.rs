@@ -1,6 +1,6 @@
 //! `mol report` — Generate a human-readable run report.
 //!
-//! Ports `cmd_report` from `backend/agent/researchclaw/cli.py`.
+//! Ports `cmd_report` from `backend/agent/mol/cli.py`.
 
 use anyhow::{bail, Result};
 use clap::Args;

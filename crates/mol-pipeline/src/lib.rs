@@ -1,7 +1,7 @@
 //! Mol-HEP-Lab: Pipeline execution and stage orchestration.
 //!
 //! This crate implements the 26-stage research pipeline state machine and
-//! runner, ported from the Python `researchclaw` backend.
+//! runner, ported from the Python `mol` backend.
 //!
 //! # Modules
 //!

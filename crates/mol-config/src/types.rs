@@ -1,8 +1,7 @@
 //! Configuration type definitions for Mol-HEP-Lab.
 //!
 //! All structs are direct ports of the Python dataclasses in
-//! `backend/agent/researchclaw/config.py` with brand renames applied:
-//! researchclaw → researchmol, metaclaw → metamol, config.arc.yaml → config.mol.yaml.
+//! `backend/agent/mol/config.py` with Mol-HEP-Lab brand names applied.
 
 use serde::{Deserialize, Serialize};
 
@@ -146,7 +145,7 @@ pub struct KnowledgeBaseConfig {
     pub obsidian_vault: String,
 }
 
-/// OpenMol bridge integration flags (was `OpenClawBridgeConfig`).
+/// OpenMol bridge integration flags (was `OpenMolBridgeConfig`).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OpenMolBridgeConfig {
     #[serde(default)]
@@ -663,7 +662,7 @@ impl Default for ExperimentConfig {
     }
 }
 
-/// PRM quality-gate settings for MetaMol bridge (was `MetaClawPRMConfig`).
+/// PRM quality-gate settings for MetaMol bridge (was `MetaMolPRMConfig`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetaMolPRMConfig {
     #[serde(default)]
@@ -699,7 +698,7 @@ impl Default for MetaMolPRMConfig {
     }
 }
 
-/// Lesson-to-skill conversion settings for MetaMol (was `MetaClawLessonToSkillConfig`).
+/// Lesson-to-skill conversion settings for MetaMol (was `MetaMolLessonToSkillConfig`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetaMolLessonToSkillConfig {
     #[serde(default = "defaults::bool_true")]
@@ -720,7 +719,7 @@ impl Default for MetaMolLessonToSkillConfig {
     }
 }
 
-/// MetaMol integration bridge configuration (was `MetaClawBridgeConfig`).
+/// MetaMol integration bridge configuration (was `MetaMolBridgeConfig`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetaMolBridgeConfig {
     #[serde(default)]

@@ -124,4 +124,4 @@ Hallucination in generated videos is not just a matter of low visual quality. It
 
 ---
 
-*Generated end-to-end by Claw AI Lab pipeline · Lab Explore track · S9 → S22 fully autonomous*
+*Generated end-to-end by Mol-HEP-Lab pipeline · Lab Explore track · S9 → S22 fully autonomous*

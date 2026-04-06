@@ -1,7 +1,7 @@
 //! mol-engine: Agentic LLM tool-use loop and code generation engine.
 //!
-//! This crate is the Rust port of `researchclaw/pipeline/claw_engine/` and
-//! `researchclaw/pipeline/codegen/`, re-branded for Mol-HEP-Lab as `mol_engine`.
+//! This crate is the Rust port of `mol/pipeline/mol_engine/` and
+//! `mol/pipeline/codegen/`, re-branded for Mol-HEP-Lab as `mol_engine`.
 //!
 //! # Architecture
 //!

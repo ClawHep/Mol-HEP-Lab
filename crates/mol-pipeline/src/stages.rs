@@ -1,6 +1,6 @@
 //! 26-stage Mol-HEP-Lab pipeline state machine.
 //!
-//! Faithfully ported from `backend/agent/researchclaw/pipeline/stages.py`.
+//! Faithfully ported from `backend/agent/mol/pipeline/stages.py`.
 //! Defines the stage sequence, status transitions, gate logic, and rollback
 //! rules for the complete research pipeline.
 

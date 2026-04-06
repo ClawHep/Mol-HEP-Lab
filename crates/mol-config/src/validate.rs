@@ -1,7 +1,7 @@
 //! Configuration validation for Mol-HEP-Lab.
 //!
 //! Ports `validate_config()` from
-//! `backend/agent/researchclaw/config.py`.
+//! `backend/agent/mol/config.py`.
 
 use std::path::Path;
 

@@ -1,6 +1,6 @@
 //! `mol doctor` — Check environment and configuration health.
 //!
-//! Ports `cmd_doctor` from `backend/agent/researchclaw/cli.py`.
+//! Ports `cmd_doctor` from `backend/agent/mol/cli.py`.
 
 use anyhow::{bail, Result};
 use clap::Args;
