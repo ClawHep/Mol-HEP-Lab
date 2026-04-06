@@ -18,6 +18,7 @@ pub mod executor;
 pub mod runner;
 pub mod runtimes;
 pub mod stages;
+pub mod stages_impl;
 
 // ---------------------------------------------------------------------------
 // Convenience re-exports for downstream crates

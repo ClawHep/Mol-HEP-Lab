@@ -152,6 +152,10 @@ impl Default for ContextOpts {
 /// and return the string content of the first directory that contains
 /// `filename`.  Versioned dirs like `stage-13_v1` are tried after their
 /// non-versioned counterpart at the same stage number.
+pub fn read_prior_artifact_pub(run_dir: &Path, filename: &str) -> Option<String> {
+    read_prior_artifact(run_dir, filename)
+}
+
 fn read_prior_artifact(run_dir: &Path, filename: &str) -> Option<String> {
     let mut stage_dirs: Vec<_> = std::fs::read_dir(run_dir)
         .ok()?
@@ -186,6 +190,11 @@ fn read_prior_artifact(run_dir: &Path, filename: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Public wrapper for [`find_prior_file`] used by stages_impl modules.
+pub fn find_prior_file_pub(run_dir: &Path, filename: &str) -> Option<PathBuf> {
+    find_prior_file(run_dir, filename)
 }
 
 /// Same as [`read_prior_artifact`] but returns the `PathBuf` instead of the
@@ -228,6 +237,7 @@ fn find_prior_file(run_dir: &Path, filename: &str) -> Option<PathBuf> {
 ///
 /// Tries in order: ` ```yaml ` fence → ` ```yml ` fence → bare ` ``` ` fence
 /// → raw YAML detection (lines starting with `word:`).
+#[allow(dead_code)]
 fn extract_yaml_block(text: &str) -> String {
     // Try ```yaml fence
     if let Some(start) = text.find("```yaml") {
@@ -277,6 +287,7 @@ fn extract_yaml_block(text: &str) -> String {
 /// 2. Extract from ` ```json ` fences.
 /// 3. Balanced-brace matching (largest `{}` block first).
 /// 4. Balanced-bracket matching for arrays.
+#[allow(dead_code)]
 fn safe_json_loads(text: &str) -> Option<serde_json::Value> {
     // 1. Direct parse
     if let Ok(v) = serde_json::from_str(text.trim()) {
@@ -564,7 +575,7 @@ fn detect_domain(topic: &str) -> (&'static str, &'static str, &'static str) {
 }
 
 /// Build fallback search queries for a topic, handling mixed Chinese-English.
-fn build_fallback_queries(topic: &str) -> Vec<String> {
+pub fn build_fallback_queries(topic: &str) -> Vec<String> {
     let mut queries: Vec<String> = Vec::new();
 
     // Chinese-to-English domain mapping
@@ -668,6 +679,7 @@ fn build_fallback_queries(topic: &str) -> Vec<String> {
 /// Read `human_feedback.jsonl` from `run_dir`, returning formatted feedback
 /// lines as a single string.  Lines already consumed (tracked via a stamp
 /// file) are excluded.
+#[allow(dead_code)]
 fn load_human_feedback(run_dir: &Path, _stage: Stage) -> String {
     let jsonl_path = run_dir.join("human_feedback.jsonl");
     let stamp_path = run_dir.join(".feedback_consumed_up_to");
@@ -728,6 +740,7 @@ fn load_human_feedback(run_dir: &Path, _stage: Stage) -> String {
 
 /// Try to load evolution lessons from `run_dir/evolution/` and return them
 /// as a formatted string.  Returns empty string on any error.
+#[allow(dead_code)]
 fn get_evolution_overlay(run_dir: &Path, stage_name: &str) -> String {
     let evo_dir = run_dir.join("evolution");
     if !evo_dir.is_dir() {
@@ -999,10 +1012,11 @@ pub fn extract_paper_title(md_text: &str) -> String {
 
 /// Execute `stage` using the supplied context, returning a `StageResult`.
 ///
-/// Currently every stage is a stub that logs and returns a synthetic
-/// `Done` result.  Each arm should be replaced with a call to the
-/// corresponding domain-crate implementation as those crates are built.
+/// Each arm dispatches to the corresponding stage implementation in the
+/// `stages_impl` submodule.
 pub async fn execute_stage(stage: Stage, context: &StageContext) -> Result<StageResult> {
+    use crate::stages_impl;
+
     let stage_dir = context.stage_dir(stage);
     tokio::fs::create_dir_all(&stage_dir).await?;
 
@@ -1017,61 +1031,103 @@ pub async fn execute_stage(stage: Stage, context: &StageContext) -> Result<Stage
 
     let mut result = match stage {
         // Phase A: Research Scoping ----------------------------------------
-        Stage::TopicInit => stub_stage(stage, &["topic_brief", "research_questions"]).await,
-        Stage::ProblemDecompose => stub_stage(stage, &["problem_tree", "sub_problems"]).await,
+        Stage::TopicInit => {
+            stages_impl::phase_a::execute_topic_init(stage, context).await
+        }
+        Stage::ProblemDecompose => {
+            stages_impl::phase_a::execute_problem_decompose(stage, context).await
+        }
 
         // Phase B: Literature Discovery ------------------------------------
-        Stage::SearchStrategy => stub_stage(stage, &["search_queries", "source_list"]).await,
-        Stage::LiteratureCollect => stub_stage(stage, &["raw_papers", "paper_metadata"]).await,
-        Stage::LiteratureScreen => {
-            stub_stage(stage, &["screened_papers", "exclusion_reasons"]).await
+        Stage::SearchStrategy => {
+            stages_impl::phase_b::execute_search_strategy(stage, context).await
         }
-        Stage::KnowledgeExtract => stub_stage(stage, &["knowledge_cards", "citation_map"]).await,
+        Stage::LiteratureCollect => {
+            stages_impl::phase_b::execute_literature_collect(stage, context).await
+        }
+        Stage::LiteratureScreen => {
+            stages_impl::phase_b::execute_literature_screen(stage, context).await
+        }
+        Stage::KnowledgeExtract => {
+            stages_impl::phase_b::execute_knowledge_extract(stage, context).await
+        }
 
         // Phase C: Knowledge Synthesis -------------------------------------
-        Stage::Synthesis => stub_stage(stage, &["synthesis_report", "gap_analysis"]).await,
-        Stage::HypothesisGen => stub_stage(stage, &["hypotheses", "rationale"]).await,
+        Stage::Synthesis => {
+            stages_impl::phase_c::execute_synthesis(stage, context).await
+        }
+        Stage::HypothesisGen => {
+            stages_impl::phase_c::execute_hypothesis_gen(stage, context).await
+        }
 
         // Phase D: Experiment Design ----------------------------------------
         Stage::ExperimentDesign => {
-            stub_stage(stage, &["experiment_plan", "success_criteria"]).await
+            stages_impl::phase_d::execute_experiment_design(stage, context).await
         }
         Stage::CodebaseSearch => {
-            stub_stage(stage, &["codebase_context", "relevant_files"]).await
+            stages_impl::phase_d::execute_codebase_search(stage, context).await
         }
-        Stage::CodeGeneration => stub_stage(stage, &["experiment_code", "code_readme"]).await,
-        Stage::SanityCheck => stub_stage(stage, &["sanity_report"]).await,
+        Stage::CodeGeneration => {
+            stages_impl::phase_d::execute_code_generation(stage, context).await
+        }
+        Stage::SanityCheck => {
+            stages_impl::phase_d::execute_sanity_check(stage, context).await
+        }
         Stage::ResourcePlanning => {
-            stub_stage(stage, &["resource_plan", "compute_estimate"]).await
+            stages_impl::phase_d::execute_resource_planning(stage, context).await
         }
 
         // Phase E: Experiment Execution ------------------------------------
-        Stage::ExperimentRun => stub_stage(stage, &["raw_results", "run_logs"]).await,
+        Stage::ExperimentRun => {
+            stages_impl::phase_e::execute_experiment_run(stage, context).await
+        }
         Stage::IterativeRefine => {
-            stub_stage(stage, &["refined_results", "refinement_log"]).await
+            stages_impl::phase_e::execute_iterative_refine(stage, context).await
         }
 
         // Phase F: Analysis & Decision -------------------------------------
-        Stage::ResultAnalysis => stub_stage(stage, &["analysis_report", "figures"]).await,
-        Stage::ResearchDecision => stub_stage(stage, &["decision_record"]).await,
-        Stage::KnowledgeSummary => stub_stage(stage, &["knowledge_summary"]).await,
+        Stage::ResultAnalysis => {
+            stages_impl::phase_f::execute_result_analysis(stage, context).await
+        }
+        Stage::ResearchDecision => {
+            stages_impl::phase_f::execute_research_decision(stage, context).await
+        }
+        Stage::KnowledgeSummary => {
+            stages_impl::phase_f::execute_knowledge_summary(stage, context).await
+        }
 
         // Phase G: Paper Writing -------------------------------------------
-        Stage::PaperOutline => stub_stage(stage, &["paper_outline"]).await,
-        Stage::PaperDraft => stub_stage(stage, &["paper_draft"]).await,
-        Stage::PeerReview => stub_stage(stage, &["review_comments"]).await,
-        Stage::PaperRevision => stub_stage(stage, &["paper_revised", "revision_notes"]).await,
+        Stage::PaperOutline => {
+            stages_impl::phase_g::execute_paper_outline(stage, context).await
+        }
+        Stage::PaperDraft => {
+            stages_impl::phase_g::execute_paper_draft(stage, context).await
+        }
+        Stage::PeerReview => {
+            stages_impl::phase_g::execute_peer_review(stage, context).await
+        }
+        Stage::PaperRevision => {
+            stages_impl::phase_g::execute_paper_revision(stage, context).await
+        }
 
         // Phase H: Finalization --------------------------------------------
-        Stage::QualityGate => stub_stage(stage, &["quality_report"]).await,
-        Stage::KnowledgeArchive => stub_stage(stage, &["archive_manifest"]).await,
-        Stage::ExportPublish => stub_stage(stage, &["paper_final", "paper_tex"]).await,
+        Stage::QualityGate => {
+            stages_impl::phase_h::execute_quality_gate(stage, context).await
+        }
+        Stage::KnowledgeArchive => {
+            stages_impl::phase_h::execute_knowledge_archive(stage, context).await
+        }
+        Stage::ExportPublish => {
+            stages_impl::phase_h::execute_export_publish(stage, context).await
+        }
         Stage::CitationVerify => {
-            stub_stage(stage, &["verification_report", "paper_final_verified"]).await
+            stages_impl::phase_h::execute_citation_verify(stage, context).await
         }
 
         // Special ----------------------------------------------------------
-        Stage::Discussion => stub_stage(stage, &["discussion_notes"]).await,
+        Stage::Discussion => {
+            stages_impl::discussion::execute_discussion(stage, context).await
+        }
     };
 
     result.elapsed_secs = t0.elapsed().as_secs_f64();
@@ -1092,6 +1148,9 @@ pub async fn execute_stage(stage: Stage, context: &StageContext) -> Result<Stage
 // ---------------------------------------------------------------------------
 
 /// Return a stub `Done` result listing `artifact_names` as produced outputs.
+///
+/// Retained for use in tests and as a fallback during development.
+#[allow(dead_code)]
 async fn stub_stage(stage: Stage, artifact_names: &[&str]) -> StageResult {
     StageResult {
         stage,
@@ -1129,7 +1188,7 @@ mod tests {
         let ctx = make_context(dir.path());
         let result = execute_stage(Stage::TopicInit, &ctx).await.unwrap();
         assert_eq!(result.status, StageStatus::Done);
-        assert!(result.artifacts.contains(&"topic_brief".to_owned()));
+        assert!(result.artifacts.contains(&"goal.md".to_owned()));
     }
 
     #[tokio::test]
