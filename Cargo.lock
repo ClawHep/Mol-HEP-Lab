@@ -1664,6 +1664,7 @@ name = "mol-common"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "chrono",
  "nvml-wrapper",
  "regex",
@@ -1672,6 +1673,7 @@ dependencies = [
  "sysinfo",
  "tera",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
 ]
 

@@ -14,3 +14,5 @@ sysinfo = { workspace = true }
 nvml-wrapper = { workspace = true }
 regex = { workspace = true }
 tera = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }

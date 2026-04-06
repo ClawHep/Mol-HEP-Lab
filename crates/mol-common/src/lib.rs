@@ -12,7 +12,9 @@
 //! | [`quality`] | Content quality assessment and template-content detection |
 //! | [`hardware`] | Local hardware detection (GPU / MPS / CPU) |
 //! | [`sanitize`] | Text sanitization: thinking-tag stripping, API key redaction, filename cleaning |
+//! | [`adapters`] | Typed adapter traits and deterministic recording stubs for testing |
 
+pub mod adapters;
 pub mod hardware;
 pub mod prompts;
 pub mod quality;
@@ -45,3 +47,11 @@ pub use sanitize::{
 
 // Prompts
 pub use prompts::PromptEngine;
+
+// Adapters
+pub use adapters::{
+    AdapterBundle, BrowserAdapter, BrowserPage, CronAdapter, FetchResponse, MemoryAdapter,
+    MessageAdapter, RecordingBrowserAdapter, RecordingCronAdapter, RecordingMemoryAdapter,
+    RecordingMessageAdapter, RecordingSessionsAdapter, RecordingWebFetchAdapter, SessionsAdapter,
+    WebFetchAdapter,
+};
