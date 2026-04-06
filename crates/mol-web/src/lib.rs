@@ -7,12 +7,14 @@
 //! - Google Scholar scraping with rate limiting
 //! - Network connectivity pre-checks
 
+pub mod agent;
 pub mod connectivity;
 pub mod crawler;
 pub mod pdf;
 pub mod scholar;
 pub mod search;
 
+pub use agent::{WebSearchAgent, WebSearchAgentConfig, WebSearchAgentResult};
 pub use connectivity::{check_connectivity, ConnectivityReport, EndpointStatus};
 pub use crawler::{crawl, CrawlResult};
 pub use pdf::{extract_text, PdfContent};
