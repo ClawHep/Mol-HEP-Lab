@@ -19,6 +19,8 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 futures-util = { workspace = true }
 shellexpand = "3"
+git2 = { workspace = true }
 mol-common = { workspace = true }
 mol-config = { workspace = true }
 mol-llm = { workspace = true }
+plotters = { workspace = true }

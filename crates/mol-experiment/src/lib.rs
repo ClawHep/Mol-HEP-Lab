@@ -27,6 +27,7 @@
 //! ```
 
 pub mod colab;
+pub mod git_manager;
 pub mod docker;
 pub mod evaluators;
 pub mod harness;
@@ -35,6 +36,7 @@ pub mod runner;
 pub mod sandbox;
 pub mod ssh;
 pub mod validation;
+pub mod visualize;
 
 // ---------------------------------------------------------------------------
 // Top-level re-exports

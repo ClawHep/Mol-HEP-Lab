@@ -61,6 +61,8 @@ url = "2"
 which = "7"
 scraper = "0.22"
 quick-xml = "0.37"
+git2 = "0.20"
+plotters = "0.3"
 
 # Internal crate dependencies
 mol-common = { path = "crates/mol-common" }
