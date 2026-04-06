@@ -28,6 +28,7 @@
 
 pub mod colab;
 pub mod docker;
+pub mod evaluators;
 pub mod harness;
 pub mod metrics;
 pub mod runner;
