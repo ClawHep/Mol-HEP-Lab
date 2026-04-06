@@ -183,6 +183,18 @@ pub async fn execute_pipeline(
 
         info!("{} {} — running...", prefix, stage.name());
 
+        // Pre-flight input validation.
+        let available_artifacts: Vec<String> = artifact_registry.keys().cloned().collect();
+        if let Err(e) = crate::contracts::validate_inputs(stage, &available_artifacts) {
+            if NONCRITICAL_STAGES.contains(&stage) {
+                warn!("{} {} — input validation failed (noncritical, skipping): {}", prefix, stage.name(), e);
+                stages_skipped += 1;
+                continue;
+            } else {
+                return Err(e);
+            }
+        }
+
         // Build execution context.
         let context = StageContext {
             run_dir: run_dir.to_owned(),
@@ -225,6 +237,13 @@ pub async fn execute_pipeline(
                 info!("{} {} — blocked (awaiting approval)", prefix, stage.name());
             }
             _ => {}
+        }
+
+        // Post-execution output validation (soft warning only).
+        if result.status == StageStatus::Done {
+            if let Err(e) = crate::contracts::validate_outputs(stage, &result.artifacts) {
+                warn!("{} {} — output validation warning: {}", prefix, stage.name(), e);
+            }
         }
 
         // Register produced artifacts.
@@ -370,6 +389,7 @@ pub async fn execute_iterative_pipeline(
 
     let mut all_results: Vec<StageResult> = Vec::new();
     let mut iteration: u32 = 0;
+    let mut iter_artifacts: HashMap<String, PathBuf> = HashMap::new();
 
     loop {
         iteration += 1;
@@ -388,11 +408,29 @@ pub async fn execute_iterative_pipeline(
 
         let mut stop = false;
         for &stage in &iterative_stages {
+            // Pre-flight input validation.
+            let available: Vec<String> = iter_artifacts.keys().cloned().collect();
+            if let Err(e) = crate::contracts::validate_inputs(stage, &available) {
+                if NONCRITICAL_STAGES.contains(&stage) {
+                    warn!(
+                        "[{}] {} — input validation failed (noncritical, skipping): {}",
+                        run_id, stage.name(), e
+                    );
+                    continue;
+                } else {
+                    warn!(
+                        "[{}] {} — input validation failed: {}",
+                        run_id, stage.name(), e
+                    );
+                    // Continue anyway in iterative mode — artifacts may arrive later.
+                }
+            }
+
             let context = StageContext {
                 run_dir: run_dir.to_owned(),
                 run_id: run_id.to_owned(),
                 config: config.clone(),
-                prior_artifacts: HashMap::new(),
+                prior_artifacts: iter_artifacts.clone(),
                 auto_approve_gates: pipeline_config.auto_approve,
             };
 
@@ -400,6 +438,19 @@ pub async fn execute_iterative_pipeline(
                 Ok(r) => r,
                 Err(e) => StageResult::failure(stage, e.to_string()),
             };
+
+            // Post-execution output validation (soft warning only).
+            if result.status == StageStatus::Done {
+                if let Err(e) = crate::contracts::validate_outputs(stage, &result.artifacts) {
+                    warn!("[{}] {} — output validation warning: {}", run_id, stage.name(), e);
+                }
+            }
+
+            // Accumulate artifacts for subsequent stages.
+            for artifact in &result.artifacts {
+                let art_path = run_dir.join(artifact);
+                iter_artifacts.insert(artifact.clone(), art_path);
+            }
 
             let done = result.status == StageStatus::Done && result.decision == "proceed";
             all_results.push(result);
@@ -498,6 +549,10 @@ mod tests {
 
     #[tokio::test]
     async fn pipeline_runs_phase_a() {
+        // TopicInit produces file-name artifacts (goal.md, hardware_profile.json)
+        // rather than the contract's logical names (topic_brief, research_questions).
+        // ProblemDecompose requires topic_brief, so input validation fails and the
+        // pipeline returns an error for the critical stage.
         let dir = TempDir::new().unwrap();
         let pipeline_cfg = PipelineConfig {
             from_stage: Stage::TopicInit,
@@ -505,16 +560,19 @@ mod tests {
             auto_approve: true,
             ..Default::default()
         };
-        let summary = execute_pipeline(
+        let result = execute_pipeline(
             &default_config(),
             &pipeline_cfg,
             dir.path(),
             "test-002",
         )
-        .await
-        .unwrap();
+        .await;
 
-        assert_eq!(summary.stages_completed, 2);
+        // ProblemDecompose is a critical stage; missing topic_brief input
+        // causes the pipeline to return an error rather than silently skip.
+        assert!(result.is_err(), "expected input validation error for critical stage");
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("topic_brief"), "error should name the missing artifact: {msg}");
     }
 
     #[tokio::test]
@@ -535,6 +593,9 @@ mod tests {
 
     #[tokio::test]
     async fn pipeline_stop_on_gate() {
+        // Running TopicInit → LiteratureScreen will fail at ProblemDecompose
+        // because stage implementations emit file-name artifacts while contracts
+        // use logical names.  The pipeline returns an error for the critical stage.
         let dir = TempDir::new().unwrap();
         let pipeline_cfg = PipelineConfig {
             from_stage: Stage::TopicInit,
@@ -543,17 +604,16 @@ mod tests {
             stop_on_gate: true,
             ..Default::default()
         };
-        let summary = execute_pipeline(
+        let result = execute_pipeline(
             &default_config(),
             &pipeline_cfg,
             dir.path(),
             "test-gate",
         )
-        .await
-        .unwrap();
+        .await;
 
-        // The pipeline should have stopped at or before LiteratureScreen.
-        assert!(summary.stages_completed >= 1);
+        // ProblemDecompose is critical; missing topic_brief triggers an error.
+        assert!(result.is_err());
     }
 
     #[tokio::test]
@@ -572,5 +632,93 @@ mod tests {
 
         // Should have produced at least one result per stage.
         assert!(!results.is_empty());
+    }
+
+    /// Contract validation — critical stage missing inputs returns error.
+    ///
+    /// `ProblemDecompose` requires `topic_brief`.  Running only that stage
+    /// (no prior stages, so no artifacts in the registry) must cause the
+    /// pipeline to return `Err` rather than calling `execute_stage`.
+    #[tokio::test]
+    async fn contract_validation_critical_stage_missing_inputs_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let pipeline_cfg = PipelineConfig {
+            from_stage: Stage::ProblemDecompose,
+            to_stage: Some(Stage::ProblemDecompose),
+            auto_approve: true,
+            ..Default::default()
+        };
+        let result = execute_pipeline(
+            &default_config(),
+            &pipeline_cfg,
+            dir.path(),
+            "test-contract-critical",
+        )
+        .await;
+
+        assert!(result.is_err(), "critical stage with missing inputs should return Err");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("topic_brief"),
+            "error message should name the missing artifact; got: {msg}"
+        );
+    }
+
+    /// Contract validation — noncritical stage missing inputs is skipped.
+    ///
+    /// `QualityGate` is in `NONCRITICAL_STAGES` and requires `paper_revised`.
+    /// Starting the pipeline from `QualityGate` with no prior artifacts should
+    /// log a warning and skip the stage instead of returning an error.
+    #[tokio::test]
+    async fn contract_validation_noncritical_stage_missing_inputs_is_skipped() {
+        let dir = TempDir::new().unwrap();
+        let pipeline_cfg = PipelineConfig {
+            from_stage: Stage::QualityGate,
+            to_stage: Some(Stage::QualityGate),
+            auto_approve: true,
+            ..Default::default()
+        };
+        let summary = execute_pipeline(
+            &default_config(),
+            &pipeline_cfg,
+            dir.path(),
+            "test-contract-noncritical",
+        )
+        .await
+        .unwrap();
+
+        // The stage was skipped, not failed.
+        assert_eq!(summary.stages_completed, 0);
+        assert_eq!(summary.stages_failed, 0);
+        assert_eq!(summary.stages_skipped, 1);
+    }
+
+    /// Contract validation — output validation is a soft warning.
+    ///
+    /// `TopicInit` has no required inputs so it always passes pre-flight.
+    /// Its contract expects `topic_brief` and `research_questions`, but the
+    /// implementation emits `goal.md` and `hardware_profile.json`.  The stage
+    /// should still be counted as completed (output validation is non-fatal).
+    #[tokio::test]
+    async fn contract_validation_output_warning_does_not_fail_stage() {
+        let dir = TempDir::new().unwrap();
+        let pipeline_cfg = PipelineConfig {
+            from_stage: Stage::TopicInit,
+            to_stage: Some(Stage::TopicInit),
+            auto_approve: true,
+            ..Default::default()
+        };
+        let summary = execute_pipeline(
+            &default_config(),
+            &pipeline_cfg,
+            dir.path(),
+            "test-contract-output",
+        )
+        .await
+        .unwrap();
+
+        // Output validation is a soft warning — the stage is still Done.
+        assert_eq!(summary.stages_completed, 1);
+        assert_eq!(summary.stages_failed, 0);
     }
 }
