@@ -16,6 +16,7 @@ pub mod checkpoint;
 pub mod contracts;
 pub mod executor;
 pub mod runner;
+pub mod runtimes;
 pub mod stages;
 
 // ---------------------------------------------------------------------------
