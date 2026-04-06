@@ -34,6 +34,7 @@ pub mod adapters;
 pub mod detector;
 pub mod experiment_schema;
 pub mod profile;
+pub mod prompt_adapter;
 
 // ---------------------------------------------------------------------------
 // Flat re-exports for convenience
@@ -54,4 +55,9 @@ pub use experiment_schema::{
 
 pub use profile::{
     load_profile, DomainMetric, DomainProfile, ExperimentParadigm, MetricType, ResearchDomain,
+};
+
+pub use prompt_adapter::{
+    get_adapter as get_prompt_adapter, GenericPromptAdapter, MLPromptAdapter, PromptAdapter,
+    PromptBlocks, PromptContext,
 };
