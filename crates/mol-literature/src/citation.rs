@@ -397,7 +397,7 @@ fn classify_by_sim(sim: f64, expected: &str, found: &str, method: &str) -> Optio
         )
     } else {
         (
-            VerifyStatus::Suspicious,
+            VerifyStatus::Hallucinated,
             format!("{method}: title mismatch (sim={sim:.2}): '{found}'"),
         )
     };
@@ -771,5 +771,126 @@ mod tests {
             results: vec![],
         };
         assert!((report.integrity_score() - 0.75).abs() < 1e-9);
+    }
+
+    // -----------------------------------------------------------------------
+    // classify_by_sim boundary tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn classify_by_sim_boundaries() {
+        // sim = 0.0 → Hallucinated
+        let r = classify_by_sim(0.0, "a", "b", "test").unwrap();
+        assert_eq!(r.status, VerifyStatus::Hallucinated);
+
+        // sim = 0.49 → Hallucinated
+        let r = classify_by_sim(0.49, "a", "b", "test").unwrap();
+        assert_eq!(r.status, VerifyStatus::Hallucinated);
+
+        // sim = 0.50 → Suspicious
+        let r = classify_by_sim(0.50, "a", "b", "test").unwrap();
+        assert_eq!(r.status, VerifyStatus::Suspicious);
+
+        // sim = 0.79 → Suspicious
+        let r = classify_by_sim(0.79, "a", "b", "test").unwrap();
+        assert_eq!(r.status, VerifyStatus::Suspicious);
+
+        // sim = 0.80 → Verified
+        let r = classify_by_sim(0.80, "a", "b", "test").unwrap();
+        assert_eq!(r.status, VerifyStatus::Verified);
+
+        // sim = 1.0 → Verified
+        let r = classify_by_sim(1.0, "a", "a", "test").unwrap();
+        assert_eq!(r.status, VerifyStatus::Verified);
+    }
+
+    // -----------------------------------------------------------------------
+    // annotate_paper_hallucinations tests
+    // -----------------------------------------------------------------------
+
+    fn make_report_with_hallucinated(keys: &[&str]) -> VerificationReport {
+        let results: Vec<CitationResult> = keys
+            .iter()
+            .map(|k| CitationResult {
+                cite_key: k.to_string(),
+                title: k.to_string(),
+                status: VerifyStatus::Hallucinated,
+                confidence: 0.0,
+                method: "test".to_owned(),
+                details: String::new(),
+                matched_paper: None,
+            })
+            .collect();
+        let total = results.len();
+        VerificationReport {
+            total,
+            verified: 0,
+            suspicious: 0,
+            hallucinated: total,
+            skipped: 0,
+            results,
+        }
+    }
+
+    #[test]
+    fn annotate_no_hallucinations_unchanged() {
+        let report = VerificationReport {
+            total: 0,
+            verified: 0,
+            suspicious: 0,
+            hallucinated: 0,
+            skipped: 0,
+            results: vec![],
+        };
+        let text = r"Some text \cite{smith2024a, jones2023b}. More text.";
+        let result = annotate_paper_hallucinations(text, &report);
+        assert_eq!(result, text);
+    }
+
+    #[test]
+    fn annotate_single_latex_cite_removed() {
+        let report = make_report_with_hallucinated(&["fake2024x"]);
+        let text = r"Text \cite{fake2024x} here.";
+        let result = annotate_paper_hallucinations(text, &report);
+        assert!(!result.contains("fake2024x"));
+        // Empty cite{} should be absent
+        assert!(!result.contains(r"\cite{fake2024x}"));
+    }
+
+    #[test]
+    fn annotate_multi_cite_partial_removal() {
+        let report = make_report_with_hallucinated(&["bad2024x"]);
+        let text = r"Text \cite{good2023a, bad2024x, also2022b} here.";
+        let result = annotate_paper_hallucinations(text, &report);
+        assert!(!result.contains("bad2024x"), "hallucinated key should be gone");
+        assert!(result.contains("good2023a"), "real key should remain");
+        assert!(result.contains("also2022b"), "real key should remain");
+    }
+
+    #[test]
+    fn annotate_all_keys_hallucinated_removes_cite() {
+        let report = make_report_with_hallucinated(&["fake2024a", "fake2024b"]);
+        let text = r"Text \cite{fake2024a, fake2024b} end.";
+        let result = annotate_paper_hallucinations(text, &report);
+        assert!(!result.contains(r"\cite{"), "empty cite command should be removed");
+    }
+
+    #[test]
+    fn annotate_markdown_cite_partial_removal() {
+        let report = make_report_with_hallucinated(&["bad2024x"]);
+        let text = "Text [good2023a, bad2024x] here.";
+        let result = annotate_paper_hallucinations(text, &report);
+        assert!(!result.contains("bad2024x"), "hallucinated key should be gone");
+        assert!(result.contains("good2023a"), "real key should remain");
+    }
+
+    #[test]
+    fn annotate_markdown_cite_all_removed() {
+        let report = make_report_with_hallucinated(&["bad2024x"]);
+        let text = "Text [bad2024x] end.";
+        let result = annotate_paper_hallucinations(text, &report);
+        assert!(!result.contains("bad2024x"), "key should be gone");
+        // Should not leave bare []
+        assert!(!result.contains("[]"), "empty brackets should be cleaned");
     }
 }

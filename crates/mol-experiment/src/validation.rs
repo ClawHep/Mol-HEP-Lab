@@ -6,8 +6,42 @@
 //!   3. Security scan — detect dangerous calls and banned modules.
 
 use std::process::Command;
+use std::sync::LazyLock;
 
+use regex::Regex;
 use tracing::warn;
+
+// ---------------------------------------------------------------------------
+// Pre-compiled regex statics
+// ---------------------------------------------------------------------------
+
+static RE_IMPORT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(?:import|from)\s+([\w.]+)").unwrap());
+
+static RE_LINE_NUMBER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"line (\d+)").unwrap());
+
+/// One compiled regex per entry in DANGEROUS_CALLS.
+static DANGEROUS_CALL_RES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    DANGEROUS_CALLS
+        .iter()
+        .map(|name| {
+            let pat = format!(r"\b{}\s*\(", regex::escape(name));
+            Regex::new(&pat).unwrap()
+        })
+        .collect()
+});
+
+/// One compiled regex per entry in DANGEROUS_BUILTINS.
+static DANGEROUS_BUILTIN_RES: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    DANGEROUS_BUILTINS
+        .iter()
+        .map(|name| {
+            let pat = format!(r"\b{}\s*\(", regex::escape(name));
+            Regex::new(&pat).unwrap()
+        })
+        .collect()
+});
 
 // ---------------------------------------------------------------------------
 // ValidationIssue
@@ -163,8 +197,7 @@ pub fn validate_python_syntax(code: &str) -> anyhow::Result<Vec<ValidationIssue>
 }
 
 fn extract_line_number(stderr: &str) -> Option<u32> {
-    let re = regex::Regex::new(r"line (\d+)").ok()?;
-    let cap = re.captures(stderr)?;
+    let cap = RE_LINE_NUMBER.captures(stderr)?;
     cap[1].parse().ok()
 }
 
@@ -241,13 +274,10 @@ pub fn check_import_whitelist(code: &str, allowed: &[String]) -> Vec<ValidationI
         return Vec::new();
     }
 
-    let import_re = regex::Regex::new(r"^\s*(?:import|from)\s+([\w.]+)")
-        .expect("import regex");
-
     let mut issues = Vec::new();
 
     for (line_idx, line) in code.lines().enumerate() {
-        if let Some(cap) = import_re.captures(line) {
+        if let Some(cap) = RE_IMPORT.captures(line) {
             let module_name = cap[1].to_string();
             let top_module = module_name
                 .split('.')
@@ -289,8 +319,8 @@ pub fn check_security(code: &str) -> Vec<ValidationIssue> {
         }
 
         // --- Dangerous builtins ---
-        for &builtin in DANGEROUS_BUILTINS {
-            if contains_call(stripped, builtin) {
+        for (re, &builtin) in DANGEROUS_BUILTIN_RES.iter().zip(DANGEROUS_BUILTINS.iter()) {
+            if re.is_match(stripped) {
                 issues.push(ValidationIssue {
                     severity: Severity::Error,
                     category: Category::Security,
@@ -301,8 +331,8 @@ pub fn check_security(code: &str) -> Vec<ValidationIssue> {
         }
 
         // --- Dangerous qualified calls ---
-        for &call in DANGEROUS_CALLS {
-            if contains_call(stripped, call) {
+        for (re, &call) in DANGEROUS_CALL_RES.iter().zip(DANGEROUS_CALLS.iter()) {
+            if re.is_match(stripped) {
                 issues.push(ValidationIssue {
                     severity: Severity::Error,
                     category: Category::Security,
@@ -313,9 +343,7 @@ pub fn check_security(code: &str) -> Vec<ValidationIssue> {
         }
 
         // --- Banned module imports ---
-        let import_re = regex::Regex::new(r"^\s*(?:import|from)\s+([\w.]+)")
-            .expect("import regex");
-        if let Some(cap) = import_re.captures(line) {
+        if let Some(cap) = RE_IMPORT.captures(line) {
             let module = &cap[1];
             let top = module.split('.').next().unwrap_or(module);
             if BANNED_MODULES.contains(&top) {

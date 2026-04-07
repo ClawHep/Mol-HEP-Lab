@@ -19,6 +19,101 @@
 
 use regex::Regex;
 use std::collections::HashSet;
+use std::sync::LazyLock;
+
+// ---------------------------------------------------------------------------
+// Pre-compiled regex statics (compiled once on first use via LazyLock)
+// ---------------------------------------------------------------------------
+
+static RE_HEADING: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^(#{1,4})\s+(.+)$").unwrap());
+static RE_SENTENCE_BOUNDARY: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[.;:]\s+([A-Z])").unwrap());
+static RE_TITLE_REJECT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^(?:table|figure|fig\.|tab\.|algorithm|listing|appendix)\s").unwrap());
+static RE_METRIC_DUMP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(?:primary_metric|accuracy|loss|f1_score|precision|recall)\b").unwrap());
+static RE_PATH_LIKE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\w+_\w+/\w+").unwrap());
+static RE_BOLD_UNWRAP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\*\*(.+?)\*\*").unwrap());
+static RE_STRIP_NUM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d+(?:\.\d+)*\.?\s+").unwrap());
+static RE_LABEL_SLUG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
+// convert_block regexes
+static RE_DISPLAY_MATH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?ms)^\\\[(.+?)\\\]$").unwrap());
+static RE_DISPLAY_DOLLAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?ms)^\$\$\s*\n?(.*?)\n?\s*\$\$$").unwrap());
+static RE_FENCED_CODE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?ms)^```(\w*)\n(.*?)^```").unwrap());
+static RE_STASH_NUM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+").unwrap());
+static RE_IMAGE_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$").unwrap());
+static RE_TABLE_SEP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\|[-:| ]+\|$").unwrap());
+static RE_BULLET: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\s*)-\s+(.+)").unwrap());
+static RE_NUMBERED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(\s*)\d+\.\s+(.+)").unwrap());
+static RE_CAPTION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:\\textbf\{|[*]{2})\s*Table\s+\d+[.:]?\s*(.*?)(?:\}|[*]{2})$").unwrap());
+// convert_inline regexes
+static RE_INLINE_DISPLAY_MATH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)\\\[.+?\\\]").unwrap());
+static RE_INLINE_DISPLAY_DOLLAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)\$\$.+?\$\$").unwrap());
+static RE_INLINE_MATH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\\(.+?\\\)").unwrap());
+static RE_CMD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\[a-zA-Z]+\{[^}]*\}").unwrap());
+static RE_IMAGE_INLINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap());
+static RE_LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap());
+static RE_BOLD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\*\*(.+?)\*\*").unwrap());
+static RE_CODE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"`([^`]+)`").unwrap());
+static RE_CITE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[@([^\]]+)\]").unwrap());
+static RE_FIGREF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[(fig:[^\]]+)\]").unwrap());
+static RE_TABREF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[(tab:[^\]]+)\]").unwrap());
+static RE_EQREF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[(eq:[^\]]+)\]").unwrap());
+static RE_PROT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\x00PROT\d+\x00").unwrap());
+// escape_latex regexes
+static RE_ESCAPE_INLINE_MATH: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\\(.+?\\\)").unwrap());
+static RE_ESCAPE_DISPLAY_DOLLAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)\$\$.+?\$\$").unwrap());
+static RE_ESCAPE_CMD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\[a-zA-Z]+\{[^}]*\}").unwrap());
+// misc per-function regexes
+static RE_ORDERED_ITEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d+\. ").unwrap());
+static RE_TABLE_CAPTION_STRIP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^Table\s+\d+[.:]\s*").unwrap());
+static RE_FIG_LABEL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[^a-z0-9]+").unwrap());
+static RE_FIX_CMD: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\\([a-zA-Z]+)").unwrap());
+static RE_FILE_NOT_FOUND: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"File `([^']+)' not found").unwrap());
+static RE_RAW_VAR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b\w+_\w+/\w+(?:_\w+)*\s*=").unwrap());
+static RE_ORDERED_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d+\.\s").unwrap());
+static RE_BARE_CITE: LazyLock<Regex> =
+    LazyLock::new(|| {
+        let ck = r"[a-zA-Z][a-zA-Z0-9_-]*\d{4}[a-zA-Z0-9_]*";
+        Regex::new(&format!(r"\[({ck}(?:\s*,\s*{ck})*)\]")).unwrap()
+    });
 
 // ---------------------------------------------------------------------------
 // Thread-local render counters (figure / table numbering)
@@ -157,7 +252,7 @@ impl Section {
 
 /// Parse Markdown text into a flat list of [`Section`]s by heading.
 pub fn parse_sections(md: &str) -> Vec<Section> {
-    let heading_re = Regex::new(r"(?m)^(#{1,4})\s+(.+)$").unwrap();
+    let heading_re = &*RE_HEADING;
     let matches: Vec<_> = heading_re.find_iter(md).collect();
 
     if matches.is_empty() {
@@ -263,7 +358,7 @@ fn separate_heading_body(heading: &str) -> (String, String) {
 
     // Fallback: split at sentence boundary within first 200 chars
     if heading.len() > 200 {
-        let re = Regex::new(r"[.;:]\s+([A-Z])").unwrap();
+        let re = &*RE_SENTENCE_BOUNDARY;
         if let Some(m) = re.find(&heading[..300.min(heading.len())]) {
             if m.start() > 10 {
                 return (
@@ -292,23 +387,17 @@ static TITLE_SKIP: &[&str] = &[
 
 /// Extract the paper title from parsed sections or raw markdown.
 pub fn extract_title(sections: &[Section], raw_md: &str) -> String {
-    let title_reject_re =
-        Regex::new(r"(?i)^(?:table|figure|fig\.|tab\.|algorithm|listing|appendix)\s").unwrap();
-    let metric_dump_re =
-        Regex::new(r"(?i)(?:primary_metric|accuracy|loss|f1_score|precision|recall)\b").unwrap();
-
     let is_bad = |s: &str| -> bool {
-        title_reject_re.is_match(s)
-            || metric_dump_re.is_match(s)
-            || Regex::new(r"\w+_\w+/\w+").unwrap().is_match(s)
+        RE_TITLE_REJECT.is_match(s)
+            || RE_METRIC_DUMP.is_match(s)
+            || RE_PATH_LIKE.is_match(s)
     };
 
     // Look for explicit "# Title" or "## Title" section
     for sec in sections {
         if sec.level <= 2 && sec.heading_lower == "title" {
             let first_line = sec.body.lines().next().unwrap_or("").trim();
-            let first_line = Regex::new(r"\*\*(.+?)\*\*")
-                .unwrap()
+            let first_line = RE_BOLD_UNWRAP
                 .replace_all(first_line, "$1")
                 .to_string();
             if !first_line.is_empty() && !is_bad(&first_line) {
@@ -413,7 +502,7 @@ pub fn build_body(sections: &[Section], title: &str) -> String {
         0
     };
 
-    let strip_num_re = Regex::new(r"^\d+(?:\.\d+)*\.?\s+").unwrap();
+    let strip_num_re = &*RE_STRIP_NUM;
 
     let mut parts: Vec<String> = Vec::new();
 
@@ -449,7 +538,7 @@ pub fn build_body(sections: &[Section], title: &str) -> String {
 
         // Generate a label for cross-referencing
         if matches!(cmd, "section" | "subsection" | "subsubsection") {
-            let label_re = Regex::new(r"[^a-z0-9]+").unwrap();
+            let label_re = &*RE_LABEL_SLUG;
             let label_key = label_re
                 .replace_all(&heading_tex.to_lowercase(), "_")
                 .trim_matches('_')
@@ -478,22 +567,17 @@ pub fn build_body(sections: &[Section], title: &str) -> String {
 fn convert_block(text: &str) -> String {
     // Protect display math blocks: \[...\] and $$...$$
     let mut math_blocks: Vec<String> = Vec::new();
-    let display_math_re = Regex::new(r"(?ms)^\\\[(.+?)\\\]$").unwrap();
-    let display_dollar_re = Regex::new(r"(?ms)^\$\$\s*\n?(.*?)\n?\s*\$\$$").unwrap();
-    let fenced_code_re = Regex::new(r"(?ms)^```(\w*)\n(.*?)^```").unwrap();
 
     let mut text = text.to_owned();
 
-    let dm_re = display_math_re.clone();
-    let text_tmp = dm_re.replace_all(&text, |caps: &regex::Captures| {
+    let text_tmp = RE_DISPLAY_MATH.replace_all(&text, |caps: &regex::Captures| {
         let idx = math_blocks.len();
         math_blocks.push(caps[0].to_owned());
         format!("%%MATH_BLOCK_{idx}%%")
     });
     text = text_tmp.into_owned();
 
-    let dd_re = display_dollar_re.clone();
-    let text_tmp = dd_re.replace_all(&text, |caps: &regex::Captures| {
+    let text_tmp = RE_DISPLAY_DOLLAR.replace_all(&text, |caps: &regex::Captures| {
         let idx = math_blocks.len();
         let inner = caps[1].trim().to_owned();
         math_blocks.push(format!("\\begin{{equation}}\n{inner}\n\\end{{equation}}"));
@@ -503,8 +587,7 @@ fn convert_block(text: &str) -> String {
 
     // Protect fenced code blocks
     let mut code_blocks: Vec<String> = Vec::new();
-    let fc_re = fenced_code_re.clone();
-    let text_tmp = fc_re.replace_all(&text, |caps: &regex::Captures| {
+    let text_tmp = RE_FENCED_CODE.replace_all(&text, |caps: &regex::Captures| {
         let idx = code_blocks.len();
         let lang = caps[1].to_owned();
         let code = caps[2].to_owned();
@@ -513,10 +596,10 @@ fn convert_block(text: &str) -> String {
     });
     text = text_tmp.into_owned();
 
-    let image_re = Regex::new(r"^!\[([^\]]*)\]\(([^)]+)\)\s*$").unwrap();
-    let table_sep_re = Regex::new(r"^\|[-:| ]+\|$").unwrap();
-    let bullet_re = Regex::new(r"^(\s*)-\s+(.+)").unwrap();
-    let numbered_re = Regex::new(r"^(\s*)\d+\.\s+(.+)").unwrap();
+    let image_re = &*RE_IMAGE_LINE;
+    let table_sep_re = &*RE_TABLE_SEP;
+    let bullet_re = &*RE_BULLET;
+    let numbered_re = &*RE_NUMBERED;
 
     let lines: Vec<&str> = text.lines().collect();
     let mut output: Vec<String> = Vec::new();
@@ -527,7 +610,7 @@ fn convert_block(text: &str) -> String {
 
         // Stashed math blocks
         if line.trim().starts_with("%%MATH_BLOCK_") {
-            if let Some(num_str) = Regex::new(r"\d+").unwrap().find(line.trim()) {
+            if let Some(num_str) = RE_STASH_NUM.find(line.trim()) {
                 if let Ok(idx) = num_str.as_str().parse::<usize>() {
                     if let Some(block) = math_blocks.get(idx) {
                         output.push(block.clone());
@@ -540,7 +623,7 @@ fn convert_block(text: &str) -> String {
 
         // Stashed code blocks
         if line.trim().starts_with("%%CODE_BLOCK_") {
-            if let Some(num_str) = Regex::new(r"\d+").unwrap().find(line.trim()) {
+            if let Some(num_str) = RE_STASH_NUM.find(line.trim()) {
                 if let Ok(idx) = num_str.as_str().parse::<usize>() {
                     if let Some(block) = code_blocks.get(idx) {
                         output.push(block.clone());
@@ -576,11 +659,7 @@ fn convert_block(text: &str) -> String {
             let mut table_caption = String::new();
             if let Some(prev) = output.last() {
                 let prev = prev.trim();
-                let cap_re = Regex::new(
-                    r"(?:\\textbf\{|[*]{2})\s*Table\s+\d+[.:]?\s*(.*?)(?:\}|[*]{2})$",
-                )
-                .unwrap();
-                if let Some(cap_m) = cap_re.captures(prev) {
+                if let Some(cap_m) = RE_CAPTION.captures(prev) {
                     table_caption = cap_m
                         .get(1)
                         .map(|m| m.as_str().trim().to_owned())
@@ -711,8 +790,7 @@ pub fn convert_inline(text: &str) -> String {
     let mut protected: Vec<String> = Vec::new();
 
     // Protect \[...\] display math (must come before \(...\))
-    let display_math_re = Regex::new(r"(?s)\\\[.+?\\\]").unwrap();
-    s = display_math_re
+    s = RE_INLINE_DISPLAY_MATH
         .replace_all(&s, |caps: &regex::Captures| {
             let idx = protected.len();
             protected.push(caps[0].to_owned());
@@ -721,8 +799,7 @@ pub fn convert_inline(text: &str) -> String {
         .into_owned();
 
     // Protect $$...$$ display math
-    let display_dollar_re = Regex::new(r"(?s)\$\$.+?\$\$").unwrap();
-    s = display_dollar_re
+    s = RE_INLINE_DISPLAY_DOLLAR
         .replace_all(&s, |caps: &regex::Captures| {
             let idx = protected.len();
             protected.push(caps[0].to_owned());
@@ -731,8 +808,7 @@ pub fn convert_inline(text: &str) -> String {
         .into_owned();
 
     // Protect \(...\) inline math
-    let inline_math_re = Regex::new(r"\\\(.+?\\\)").unwrap();
-    s = inline_math_re
+    s = RE_INLINE_MATH
         .replace_all(&s, |caps: &regex::Captures| {
             let idx = protected.len();
             protected.push(caps[0].to_owned());
@@ -745,8 +821,7 @@ pub fn convert_inline(text: &str) -> String {
     s = protect_dollar_math(&s, &mut protected);
 
     // Protect existing \cmd{...} LaTeX commands
-    let cmd_re = Regex::new(r"\\[a-zA-Z]+\{[^}]*\}").unwrap();
-    s = cmd_re
+    s = RE_CMD
         .replace_all(&s, |caps: &regex::Captures| {
             let idx = protected.len();
             protected.push(caps[0].to_owned());
@@ -755,8 +830,7 @@ pub fn convert_inline(text: &str) -> String {
         .into_owned();
 
     // Protect images (before links to avoid mis-match)
-    let image_re = Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
-    s = image_re
+    s = RE_IMAGE_INLINE
         .replace_all(&s, |caps: &regex::Captures| {
             let idx = protected.len();
             protected.push(caps[0].to_owned());
@@ -765,8 +839,7 @@ pub fn convert_inline(text: &str) -> String {
         .into_owned();
 
     // Convert and protect Markdown links [text](url) → \href{url}{text}
-    let link_re = Regex::new(r"\[([^\]]+)\]\(([^)]+)\)").unwrap();
-    s = link_re
+    s = RE_LINK
         .replace_all(&s, |caps: &regex::Captures| {
             let href = format!("\\href{{{}}}{{{}}}", &caps[2], &caps[1]);
             let idx = protected.len();
@@ -779,8 +852,7 @@ pub fn convert_inline(text: &str) -> String {
     s = escape_latex_outside_protected(&s);
 
     // 4. Convert bold **text** → \textbf{text}  (must precede italic)
-    let bold_re = Regex::new(r"\*\*(.+?)\*\*").unwrap();
-    s = bold_re
+    s = RE_BOLD
         .replace_all(&s, |caps: &regex::Captures| format!("\\textbf{{{}}}", &caps[1]))
         .into_owned();
 
@@ -789,14 +861,12 @@ pub fn convert_inline(text: &str) -> String {
     s = convert_italic_stars(&s);
 
     // 6. Convert inline code `text` → \texttt{text}
-    let code_re = Regex::new(r"`([^`]+)`").unwrap();
-    s = code_re
+    s = RE_CODE
         .replace_all(&s, |caps: &regex::Captures| format!("\\texttt{{{}}}", &caps[1]))
         .into_owned();
 
     // 7. Fallback: convert remaining [@key] citations
-    let cite_re = Regex::new(r"\[@([^\]]+)\]").unwrap();
-    s = cite_re
+    s = RE_CITE
         .replace_all(&s, |caps: &regex::Captures| {
             let keys: String = caps[1]
                 .split(';')
@@ -808,30 +878,24 @@ pub fn convert_inline(text: &str) -> String {
         .into_owned();
 
     // 8. Fallback: convert bare cite-key patterns [author2024word]
-    let cite_key_pat = r"[a-zA-Z][a-zA-Z0-9_-]*\d{4}[a-zA-Z0-9_]*";
-    let bare_cite_re =
-        Regex::new(&format!(r"\[({cite_key_pat}(?:\s*,\s*{cite_key_pat})*)\]")).unwrap();
-    s = bare_cite_re
+    s = RE_BARE_CITE
         .replace_all(&s, |caps: &regex::Captures| format!("\\cite{{{}}}", &caps[1]))
         .into_owned();
 
     // 9. Figure / table / equation references
-    let figref_re = Regex::new(r"\[(fig:[^\]]+)\]").unwrap();
-    s = figref_re
+    s = RE_FIGREF
         .replace_all(&s, |caps: &regex::Captures| {
             format!("Figure~\\ref{{{}}}", &caps[1])
         })
         .into_owned();
 
-    let tabref_re = Regex::new(r"\[(tab:[^\]]+)\]").unwrap();
-    s = tabref_re
+    s = RE_TABREF
         .replace_all(&s, |caps: &regex::Captures| {
             format!("Table~\\ref{{{}}}", &caps[1])
         })
         .into_owned();
 
-    let eqref_re = Regex::new(r"\[(eq:[^\]]+)\]").unwrap();
-    s = eqref_re
+    s = RE_EQREF
         .replace_all(&s, |caps: &regex::Captures| {
             format!("Equation~\\ref{{{}}}", &caps[1])
         })
@@ -963,10 +1027,9 @@ fn convert_italic_stars(s: &str) -> String {
 /// Escape LaTeX special characters in a string that may contain `\x00PROT...\x00` markers.
 fn escape_latex_outside_protected(text: &str) -> String {
     // Split on protection markers, escape each non-protected segment
-    let prot_re = Regex::new(r"\x00PROT\d+\x00").unwrap();
     let mut result = String::with_capacity(text.len() * 2);
     let mut last = 0;
-    for m in prot_re.find_iter(text) {
+    for m in RE_PROT.find_iter(text) {
         let segment = &text[last..m.start()];
         result.push_str(&escape_latex_chars(segment));
         result.push_str(m.as_str());
@@ -1039,8 +1102,7 @@ pub fn escape_latex(text: &str) -> String {
     let mut protected: Vec<String> = Vec::new();
 
     // Protect \(...\) inline math
-    let inline_math_re = Regex::new(r"\\\(.+?\\\)").unwrap();
-    let mut s = inline_math_re
+    let mut s = RE_ESCAPE_INLINE_MATH
         .replace_all(text, |caps: &regex::Captures| {
             let idx = protected.len();
             protected.push(caps[0].to_owned());
@@ -1049,8 +1111,7 @@ pub fn escape_latex(text: &str) -> String {
         .into_owned();
 
     // Protect $$...$$ display math (must come before single $)
-    let display_dollar_re = Regex::new(r"(?s)\$\$.+?\$\$").unwrap();
-    s = display_dollar_re
+    s = RE_ESCAPE_DISPLAY_DOLLAR
         .replace_all(&s, |caps: &regex::Captures| {
             let idx = protected.len();
             protected.push(caps[0].to_owned());
@@ -1062,8 +1123,7 @@ pub fn escape_latex(text: &str) -> String {
     s = protect_dollar_math(&s, &mut protected);
 
     // Protect existing \cmd{...} LaTeX commands
-    let cmd_re = Regex::new(r"\\[a-zA-Z]+\{[^}]*\}").unwrap();
-    s = cmd_re
+    s = RE_ESCAPE_CMD
         .replace_all(&s, |caps: &regex::Captures| {
             let idx = protected.len();
             protected.push(caps[0].to_owned());
@@ -1192,8 +1252,7 @@ fn is_unordered_item(line: &str) -> bool {
 
 fn is_ordered_item(line: &str) -> bool {
     let t = line.trim_start();
-    let re = Regex::new(r"^\d+\. ").unwrap();
-    re.is_match(t)
+    RE_ORDERED_ITEM.is_match(t)
 }
 
 fn consume_unordered_list(lines: &[&str], start: usize) -> (String, usize) {
@@ -1210,7 +1269,7 @@ fn consume_unordered_list(lines: &[&str], start: usize) -> (String, usize) {
 
 fn consume_ordered_list(lines: &[&str], start: usize) -> (String, usize) {
     let mut block = "\\begin{enumerate}\n".to_owned();
-    let re = Regex::new(r"^\d+\. ").unwrap();
+    let re = &*RE_ORDERED_ITEM;
     let mut i = start;
     while i < lines.len() && is_ordered_item(lines[i]) {
         let trimmed = lines[i].trim_start();
@@ -1311,8 +1370,7 @@ pub fn render_table(table_lines: &[&str], caption: &str) -> String {
 
     // Caption
     let cap_text = if !caption.is_empty() {
-        let stripped = Regex::new(r"^Table\s+\d+[.:]\s*")
-            .unwrap()
+        let stripped = RE_TABLE_CAPTION_STRIP
             .replace(caption, "")
             .trim()
             .to_owned();
@@ -1412,7 +1470,7 @@ pub fn render_figure(caption: &str, path: &str) -> String {
     } else {
         convert_inline(caption)
     };
-    let label_re = Regex::new(r"[^a-z0-9]+").unwrap();
+    let label_re = &*RE_FIG_LABEL;
     let label_key = if caption.is_empty() {
         fig_num.to_string()
     } else {
@@ -1447,8 +1505,7 @@ pub fn fix_common_latex_errors(tex_text: &str, errors: &[String]) -> (String, Ve
 
         // Undefined control sequence: remove known safe-to-remove commands
         if err_lower.contains("undefined control sequence") {
-            let cmd_re = Regex::new(r"\\([a-zA-Z]+)").unwrap();
-            if let Some(caps) = cmd_re.captures(err) {
+            if let Some(caps) = RE_FIX_CMD.captures(err) {
                 let cmd = &caps[1];
                 let safe_to_remove = ["textsc", "textsl", "mathbb", "mathcal", "bm", "boldsymbol"];
                 if safe_to_remove.contains(&cmd) {
@@ -1465,8 +1522,7 @@ pub fn fix_common_latex_errors(tex_text: &str, errors: &[String]) -> (String, Ve
 
         // File not found: comment out missing \usepackage
         if err_lower.contains("file") && err_lower.contains("not found") {
-            let file_re = Regex::new(r"File `([^']+)' not found").unwrap();
-            if let Some(caps) = file_re.captures(err) {
+            if let Some(caps) = RE_FILE_NOT_FOUND.captures(err) {
                 let missing = &caps[1];
                 if missing.ends_with(".sty") {
                     let pkg = missing.trim_end_matches(".sty");
@@ -1669,8 +1725,7 @@ pub fn check_paper_completeness(sections: &[Section]) -> Vec<CompletenessWarning
                 )));
             }
             // Detect raw variable names / metric key dumps
-            let raw_var_re = Regex::new(r"\b\w+_\w+/\w+(?:_\w+)*\s*=").unwrap();
-            let raw_vars: Vec<&str> = raw_var_re
+            let raw_vars: Vec<&str> = RE_RAW_VAR
                 .find_iter(&sec.body)
                 .map(|m| m.as_str())
                 .take(3)
@@ -1732,7 +1787,7 @@ pub fn check_paper_completeness(sections: &[Section]) -> Vec<CompletenessWarning
             .filter(|l| {
                 let t = l.trim_start();
                 t.starts_with("- ") || t.starts_with("* ")
-                    || Regex::new(r"^\d+\.\s").unwrap().is_match(t)
+                    || RE_ORDERED_LINE.is_match(t)
             })
             .count();
         let density = bullet_count as f64 / total_lines as f64;

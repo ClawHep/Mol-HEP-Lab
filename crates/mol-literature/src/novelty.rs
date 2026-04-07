@@ -237,45 +237,78 @@ fn compute_similarity(
 ) -> f64 {
     let paper_keywords = extract_keywords(&format!("{paper_title} {paper_abstract}"));
     let kw_sim = jaccard_keywords(hypothesis_keywords, &paper_keywords);
-    if !hypothesis_title.is_empty() && !paper_title.is_empty() {
+    let raw = if !hypothesis_title.is_empty() && !paper_title.is_empty() {
         let t_sim = sequence_similarity(hypothesis_title, paper_title);
         (0.7 * kw_sim + 0.3 * t_sim).min(1.0)
     } else {
         kw_sim
-    }
+    };
+    (raw * 10000.0).round() / 10000.0
 }
 
-/// Simple character-level similarity ratio using longest-common-subsequence length.
+/// Character-level similarity ratio matching Python's `difflib.SequenceMatcher.ratio()`.
+///
+/// Finds the longest contiguous matching block, then recursively finds matches
+/// in the regions before and after.  Returns `2.0 * M / T` where M is the total
+/// number of matched characters and T is the total length of both strings.
 fn sequence_similarity(a: &str, b: &str) -> f64 {
-    let a_lower = a.to_lowercase();
-    let b_lower = b.to_lowercase();
-    let lcs = lcs_length(a_lower.as_bytes(), b_lower.as_bytes());
     if a.is_empty() && b.is_empty() {
         return 1.0;
     }
-    2.0 * lcs as f64 / (a.len() + b.len()) as f64
+    let a_lower = a.to_lowercase();
+    let b_lower = b.to_lowercase();
+    let ab = a_lower.as_bytes();
+    let bb = b_lower.as_bytes();
+    let m = matching_blocks_count(ab, 0, ab.len(), bb, 0, bb.len());
+    2.0 * m as f64 / (ab.len() + bb.len()) as f64
 }
 
-fn lcs_length(a: &[u8], b: &[u8]) -> usize {
-    // Space-optimised DP; works on byte slices for speed.
-    let (m, n) = (a.len(), b.len());
-    if m == 0 || n == 0 {
+/// Recursively count matched characters using the longest-contiguous-block approach
+/// (mirrors Python `difflib.SequenceMatcher`).
+fn matching_blocks_count(a: &[u8], alo: usize, ahi: usize, b: &[u8], blo: usize, bhi: usize) -> usize {
+    let (i, j, k) = find_longest_match(a, alo, ahi, b, blo, bhi);
+    if k == 0 {
         return 0;
     }
-    let mut prev = vec![0usize; n + 1];
-    let mut curr = vec![0usize; n + 1];
-    for i in 1..=m {
-        for j in 1..=n {
-            curr[j] = if a[i - 1] == b[j - 1] {
-                prev[j - 1] + 1
-            } else {
-                curr[j - 1].max(prev[j])
-            };
-        }
-        std::mem::swap(&mut prev, &mut curr);
-        curr.fill(0);
+    let mut count = k;
+    if alo < i && blo < j {
+        count += matching_blocks_count(a, alo, i, b, blo, j);
     }
-    prev[n]
+    if i + k < ahi && j + k < bhi {
+        count += matching_blocks_count(a, i + k, ahi, b, j + k, bhi);
+    }
+    count
+}
+
+/// Find the longest contiguous matching block in `a[alo..ahi]` and `b[blo..bhi]`.
+/// Returns `(i, j, k)` where `a[i..i+k] == b[j..j+k]` and `k` is maximised.
+fn find_longest_match(a: &[u8], alo: usize, ahi: usize, b: &[u8], blo: usize, bhi: usize) -> (usize, usize, usize) {
+    let mut best_i = alo;
+    let mut best_j = blo;
+    let mut best_k = 0usize;
+
+    // j2len[j] = length of longest match ending at b[j] for the current a[i]
+    let blen = bhi.saturating_sub(blo);
+    let mut j2len = vec![0usize; blen + 1];
+    let mut new_j2len = vec![0usize; blen + 1];
+
+    for i in alo..ahi {
+        new_j2len.fill(0);
+        for j in blo..bhi {
+            let jj = j - blo;
+            if a[i] == b[j] {
+                let k = j2len[jj] + 1;
+                new_j2len[jj + 1] = k;
+                if k > best_k {
+                    best_i = i + 1 - k;
+                    best_j = j + 1 - k;
+                    best_k = k;
+                }
+            }
+        }
+        std::mem::swap(&mut j2len, &mut new_j2len);
+    }
+    (best_i, best_j, best_k)
 }
 
 // ---------------------------------------------------------------------------
@@ -325,7 +358,7 @@ fn assess_novelty(similar_papers: &[SimilarPaper], _threshold: f64) -> (f64, Str
     if high_cite_overlap >= 2 {
         raw_score *= 0.7;
     }
-    let novelty_score = raw_score.clamp(0.0, 1.0);
+    let novelty_score = (raw_score.clamp(0.0, 1.0) * 1000.0).round() / 1000.0;
 
     let assessment = if novelty_score >= 0.7 {
         "high"

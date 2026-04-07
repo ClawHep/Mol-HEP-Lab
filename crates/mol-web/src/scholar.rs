@@ -319,7 +319,7 @@ impl ScholarClient {
         self.rate_limit().await;
 
         let q_enc: String = url::form_urlencoded::byte_serialize(name.as_bytes()).collect();
-        let url = format!("https://scholar.google.com/scholar?q=author:{q_enc}&hl=en");
+        let url = format!("https://scholar.google.com/citations?view_op=search_authors&mauthors={q_enc}&hl=en");
 
         let ua = self.next_user_agent();
         debug!("Scholar author search GET {url}");
@@ -654,4 +654,214 @@ fn parse_venue_year(s: &str) -> (u32, String) {
     }
 
     (year, venue_parts.join(", "))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -----------------------------------------------------------------------
+    // has_url
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn has_url_empty() {
+        let p = ScholarPaper {
+            title: String::new(),
+            authors: vec![],
+            year: 0,
+            abstract_snippet: String::new(),
+            citation_count: 0,
+            url: String::new(),
+            scholar_id: String::new(),
+            venue: String::new(),
+        };
+        assert!(!p.has_url());
+    }
+
+    #[test]
+    fn has_url_http() {
+        let p = ScholarPaper {
+            url: "http://example.com/paper.pdf".to_owned(),
+            title: String::new(),
+            authors: vec![],
+            year: 0,
+            abstract_snippet: String::new(),
+            citation_count: 0,
+            scholar_id: String::new(),
+            venue: String::new(),
+        };
+        assert!(p.has_url());
+    }
+
+    #[test]
+    fn has_url_https() {
+        let p = ScholarPaper {
+            url: "https://arxiv.org/abs/2301.00001".to_owned(),
+            title: String::new(),
+            authors: vec![],
+            year: 0,
+            abstract_snippet: String::new(),
+            citation_count: 0,
+            scholar_id: String::new(),
+            venue: String::new(),
+        };
+        assert!(p.has_url());
+    }
+
+    #[test]
+    fn has_url_invalid_scheme() {
+        let p = ScholarPaper {
+            url: "ftp://example.com/paper".to_owned(),
+            title: String::new(),
+            authors: vec![],
+            year: 0,
+            abstract_snippet: String::new(),
+            citation_count: 0,
+            scholar_id: String::new(),
+            venue: String::new(),
+        };
+        assert!(!p.has_url());
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_venue_year
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_venue_year_standard() {
+        let (year, venue) = parse_venue_year("Nature, 2024");
+        assert_eq!(year, 2024);
+        assert_eq!(venue, "Nature");
+    }
+
+    #[test]
+    fn parse_venue_year_no_year() {
+        let (year, venue) = parse_venue_year("Proceedings of NeurIPS");
+        assert_eq!(year, 0);
+        assert!(venue.contains("NeurIPS"));
+    }
+
+    #[test]
+    fn parse_venue_year_year_only() {
+        let (year, venue) = parse_venue_year("2023");
+        assert_eq!(year, 2023);
+        assert!(venue.is_empty());
+    }
+
+    #[test]
+    fn parse_venue_year_multi_part() {
+        let (year, venue) = parse_venue_year("ICML, 2022, PMLR");
+        assert_eq!(year, 2022);
+        assert!(venue.contains("ICML"));
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_meta_line
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_meta_line_standard() {
+        let (authors, year, venue) =
+            parse_meta_line("A Smith, B Jones - Nature, 2024 - Nature Publishing");
+        assert_eq!(authors, vec!["A Smith", "B Jones"]);
+        assert_eq!(year, 2024);
+        assert!(venue.contains("Nature"));
+    }
+
+    #[test]
+    fn parse_meta_line_no_separator() {
+        let (authors, year, _venue) = parse_meta_line("A Smith, B Jones");
+        assert_eq!(authors, vec!["A Smith", "B Jones"]);
+        assert_eq!(year, 0);
+    }
+
+    #[test]
+    fn parse_meta_line_empty() {
+        let (authors, year, venue) = parse_meta_line("");
+        assert!(authors.is_empty());
+        assert_eq!(year, 0);
+        assert!(venue.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_scholar_html
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_scholar_html_empty() {
+        let results = parse_scholar_html("<html><body></body></html>");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn parse_scholar_html_single_result() {
+        // Minimal Scholar result HTML structure
+        let html = r#"
+<html><body>
+<div class="gs_r gs_or">
+  <h3 class="gs_rt"><a href="https://example.com/paper">Attention Is All You Need</a></h3>
+  <div class="gs_a">A Vaswani, N Shazeer - NIPS, 2017 - papers.nips.cc</div>
+  <div class="gs_rs">The dominant sequence transduction models are based on complex RNN.</div>
+</div>
+</body></html>"#;
+        let results = parse_scholar_html(html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Attention Is All You Need");
+        assert_eq!(results[0].year, 2017);
+        assert!(!results[0].authors.is_empty());
+    }
+
+    #[test]
+    fn parse_scholar_html_no_title_skipped() {
+        // A result div with no title link should be skipped
+        let html = r#"
+<html><body>
+<div class="gs_r gs_or">
+  <div class="gs_a">Some Author - Nature, 2020</div>
+</div>
+</body></html>"#;
+        let results = parse_scholar_html(html);
+        assert!(results.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_author_html
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_author_html_empty() {
+        let results = parse_author_html("<html><body></body></html>");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn parse_author_html_single_card() {
+        let html = r#"
+<html><body>
+<div class="gs_ai gs_scl">
+  <h3 class="gs_ai_name"><a href="/citations?user=ABC123&hl=en">Jane Doe</a></h3>
+  <div class="gs_ai_aff">University of Example</div>
+  <div class="gs_ai_cby">Cited by 9876</div>
+  <div class="gs_ai_int"><a>machine learning</a><a>deep learning</a></div>
+</div>
+</body></html>"#;
+        let results = parse_author_html(html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "Jane Doe");
+        assert_eq!(results[0].scholar_id, "ABC123");
+        assert_eq!(results[0].citedby, 9876);
+        assert!(results[0].interests.contains(&"machine learning".to_owned()));
+    }
+
+    #[test]
+    fn parse_author_html_caps_at_five() {
+        // Build 7 author cards — should return at most 5
+        let card = r#"<div class="gs_ai gs_scl">
+  <h3 class="gs_ai_name"><a href="/citations?user=X&hl=en">Author</a></h3>
+</div>"#;
+        let html = format!("<html><body>{}</body></html>", card.repeat(7));
+        let results = parse_author_html(&html);
+        assert!(results.len() <= 5);
+    }
 }

@@ -163,7 +163,7 @@ pub fn repo_for_stage(stage: u32) -> &'static str {
 /// Queue name that feeds into a target layer.
 pub fn layer_input_queue(layer: &str) -> Option<&'static str> {
     match layer {
-        "idea" => Some("init_to_idea"),
+        "idea" => Some("execution_feedback"),
         "experiment" => Some("idea_to_experiment"),
         "coding" => Some("experiment_to_coding"),
         "execution" => Some("coding_to_execution"),
@@ -1771,7 +1771,7 @@ fn launch_s8_for_agent(state: &BridgeState, agent_id: &str, group_key: &str) -> 
         messages.push(msg_log_agent(agent, "Discussion complete → starting hypothesis generation", "info"));
     }
 
-    let aentry = state.agents.get(agent_id).unwrap();
+    let Some(aentry) = state.agents.get(agent_id) else { return messages; };
     let agent = aentry.value();
     match build_agent_cmd(state, agent, &config_path, &run_dir, 8, 8, &topic) {
         Ok(child) => {
@@ -2295,46 +2295,6 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
             messages.push(msg_project_list(list_all_projects(state)));
         }
 
-        "quick_submit" => {
-            let topic = data.get("topic").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
-            let project_id = data.get("projectId").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let mode = data.get("mode").and_then(|v| v.as_str()).unwrap_or("lab").to_string();
-
-            if topic.is_empty() {
-                messages.push(msg_log_sys("Please provide a research topic", "error"));
-                return messages;
-            }
-
-            let base_id = if project_id.is_empty() {
-                slugify(&topic, 40)
-            } else {
-                project_id
-            };
-
-            // Deduplicate
-            let base_id = {
-                let existing = state.projects_dir().join(&base_id);
-                if existing.exists() {
-                    format!("{base_id}-{}", uid())
-                } else {
-                    base_id
-                }
-            };
-
-            let disc_mode = *state.discussion_mode.read().await;
-
-            // For now: simple single-agent submit (Lab mode with config template requires
-            // the config template file; submit_new_project handles checkpoint-aware routing)
-            messages.push(msg_log_sys(
-                &format!("Project [{base_id}] submitted (mode={mode}, topic={topic})"),
-                "info",
-            ));
-            // In full implementation, generate config from template here.
-            // For now we use an empty config_path — the agent binary resolves defaults.
-            messages.extend(submit_new_project(state, &base_id, "", &topic, &mode, disc_mode));
-            messages.extend(schedule_idle_agents(state));
-            messages.push(msg_project_list(list_all_projects(state)));
-        }
 
         "resume_project" => {
             let project_id = data.get("projectId").and_then(|v| v.as_str()).unwrap_or("");
@@ -2412,46 +2372,33 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
             } else {
                 // Treat as feedback
                 let fb_id = format!("fb-{}", uid());
-                save_feedback(state, &content, target_layer, &fb_id);
-                // Count matching active projects
-                let injected_projects: Vec<String> = state
-                    .agents
-                    .iter()
-                    .filter(|e| {
-                        let a = e.value();
-                        !a.run_dir.is_empty()
-                            && (a.status == AgentStatus::Working || a.status == AgentStatus::Idle)
-                            && (target_layer == "all" || a.layer == target_layer)
-                            && !a.project_id.is_empty()
-                    })
-                    .map(|e| e.value().project_id.clone())
-                    .collect::<std::collections::HashSet<_>>()
-                    .into_iter()
-                    .collect();
-                let plan_hint = if !injected_projects.is_empty() {
-                    let mut sorted = injected_projects.clone();
-                    sorted.sort();
-                    format!(
-                        "已将反馈注入 {} 个项目的 prompt 上下文中 ({})。当前阶段完成后，下一个阶段的 LLM 将读取并参考你的反馈来调整执行计划。",
-                        sorted.len(),
-                        sorted.join(", ")
-                    )
-                } else {
-                    "已记录反馈。当前无匹配的运行中项目，反馈将在新任务启动时生效。".to_string()
-                };
+                messages.push(msg_log_sys(
+                    &format!(
+                        "收到人工反馈: {}{}",
+                        &content.chars().take(80).collect::<String>(),
+                        if content.chars().count() > 80 { "..." } else { "" }
+                    ),
+                    "info",
+                ));
+                let (_injected, plan_hint) = inject_feedback(state, &content, target_layer, &fb_id);
                 messages.push(msg_feedback_ack(&fb_id, &plan_hint, target_layer));
             }
         }
 
-        "quick_submit_project" => {
+        "quick_submit" => {
             let topic = data.get("topic").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
             let project_id = data.get("projectId").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let mode = data.get("mode").and_then(|v| v.as_str()).unwrap_or("lab").to_string();
-            let research_angles: Vec<String> = data
-                .get("researchAngles")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_default();
+            let research_angles: Vec<String> = match data.get("researchAngles") {
+                Some(Value::Array(arr)) => arr.iter().filter_map(|v| v.as_str().map(String::from)).collect(),
+                Some(Value::String(s)) if !s.trim().is_empty() => {
+                    s.split(&[',', '\u{FF0C}', '\u{3001}', ';'][..])
+                        .map(|a| a.trim().to_string())
+                        .filter(|a| !a.is_empty())
+                        .collect()
+                }
+                _ => Vec::new(),
+            };
             let reference_papers: Vec<String> = data
                 .get("referencePapers")
                 .and_then(|v| v.as_array())
@@ -2462,15 +2409,13 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
-            let path_overrides: HashMap<String, String> = data
-                .get("pathOverrides")
-                .and_then(|v| v.as_object())
-                .map(|obj| {
-                    obj.iter()
-                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                        .collect()
-                })
-                .unwrap_or_default();
+            let codebases_dir = data.get("codebasesDir").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let datasets_dir = data.get("datasetsDir").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let checkpoints_dir = data.get("checkpointsDir").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let mut path_overrides: HashMap<String, String> = HashMap::new();
+            if !codebases_dir.is_empty() { path_overrides.insert("codebases_dir".to_string(), codebases_dir); }
+            if !datasets_dir.is_empty() { path_overrides.insert("datasets_dir".to_string(), datasets_dir); }
+            if !checkpoints_dir.is_empty() { path_overrides.insert("checkpoints_dir".to_string(), checkpoints_dir); }
 
             if topic.is_empty() {
                 messages.push(msg_log_sys("请输入研究主题", "error"));
@@ -2619,68 +2564,12 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 &format!(
                     "收到人工反馈: {}{}",
                     &content.chars().take(80).collect::<String>(),
-                    if content.len() > 80 { "..." } else { "" }
+                    if content.chars().count() > 80 { "..." } else { "" }
                 ),
                 "info",
             ));
 
-            save_feedback(state, &content, &target_layer, &message_id);
-
-            let injected_projects: Vec<String> = state
-                .agents
-                .iter()
-                .filter(|e| {
-                    let a = e.value();
-                    !a.run_dir.is_empty()
-                        && (a.status == AgentStatus::Working || a.status == AgentStatus::Idle)
-                        && (target_layer == "all" || a.layer == target_layer)
-                        && !a.project_id.is_empty()
-                })
-                .map(|e| e.value().project_id.clone())
-                .collect::<std::collections::HashSet<_>>()
-                .into_iter()
-                .collect();
-
-            // Also write feedback to each matching agent's run_dir
-            for entry in state.agents.iter() {
-                let a = entry.value();
-                if a.run_dir.is_empty() {
-                    continue;
-                }
-                if a.status != AgentStatus::Working && a.status != AgentStatus::Idle {
-                    continue;
-                }
-                if target_layer != "all" && a.layer != target_layer {
-                    continue;
-                }
-                let run_dir = PathBuf::from(&a.run_dir);
-                if !run_dir.exists() {
-                    continue;
-                }
-                let fb_path = run_dir.join("human_feedback.jsonl");
-                let entry_json = serde_json::json!({
-                    "id": message_id,
-                    "content": content,
-                    "targetLayer": target_layer,
-                    "timestamp": now_ms(),
-                });
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&fb_path) {
-                    use std::io::Write;
-                    let _ = writeln!(f, "{}", serde_json::to_string(&entry_json).unwrap_or_default());
-                }
-            }
-
-            let plan_hint = if !injected_projects.is_empty() {
-                let mut sorted = injected_projects.clone();
-                sorted.sort();
-                format!(
-                    "已将反馈注入 {} 个项目的 prompt 上下文中 ({})。当前阶段完成后，下一个阶段的 LLM 将读取并参考你的反馈来调整执行计划。",
-                    sorted.len(),
-                    sorted.join(", ")
-                )
-            } else {
-                "已记录反馈。当前无匹配的运行中项目，反馈将在新任务启动时生效。".to_string()
-            };
+            let (_injected, plan_hint) = inject_feedback(state, &content, &target_layer, &message_id);
             messages.push(msg_feedback_ack(&message_id, &plan_hint, &target_layer));
         }
 
@@ -2692,6 +2581,14 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 .unwrap_or("latex_package.zip")
                 .to_string();
             if !project_id.is_empty() {
+                if !is_safe_path_component(&project_id) {
+                    messages.push(msg_log_sys("无效的项目 ID", "error"));
+                    return messages;
+                }
+                if !is_safe_path_component(&filename) {
+                    messages.push(msg_log_sys("无效的文件名", "error"));
+                    return messages;
+                }
                 messages.push(serde_json::json!({
                     "type": "download_url",
                     "payload": {
@@ -2711,6 +2608,75 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
     }
 
     messages
+}
+
+/// Shared feedback injection: logs, saves to global feedback store, writes per-agent
+/// `human_feedback.jsonl`, and returns (injected_project_ids, plan_hint_message).
+fn inject_feedback(
+    state: &BridgeState,
+    content: &str,
+    target_layer: &str,
+    message_id: &str,
+) -> (Vec<String>, String) {
+    save_feedback(state, content, target_layer, message_id);
+
+    let injected_projects: Vec<String> = state
+        .agents
+        .iter()
+        .filter(|e| {
+            let a = e.value();
+            !a.run_dir.is_empty()
+                && (a.status == AgentStatus::Working || a.status == AgentStatus::Idle)
+                && (target_layer == "all" || a.layer == target_layer)
+                && !a.project_id.is_empty()
+        })
+        .map(|e| e.value().project_id.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    // Write feedback to each matching agent's run_dir/human_feedback.jsonl
+    for entry in state.agents.iter() {
+        let a = entry.value();
+        if a.run_dir.is_empty() {
+            continue;
+        }
+        if a.status != AgentStatus::Working && a.status != AgentStatus::Idle {
+            continue;
+        }
+        if target_layer != "all" && a.layer != target_layer {
+            continue;
+        }
+        let run_dir = PathBuf::from(&a.run_dir);
+        if !run_dir.exists() {
+            continue;
+        }
+        let fb_path = run_dir.join("human_feedback.jsonl");
+        let entry_json = serde_json::json!({
+            "id": message_id,
+            "content": content,
+            "targetLayer": target_layer,
+            "timestamp": now_ms(),
+        });
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&fb_path) {
+            use std::io::Write;
+            let _ = writeln!(f, "{}", serde_json::to_string(&entry_json).unwrap_or_default());
+        }
+    }
+
+    let plan_hint = if !injected_projects.is_empty() {
+        let mut sorted = injected_projects.clone();
+        sorted.sort();
+        format!(
+            "已将反馈注入 {} 个项目的 prompt 上下文中 ({})。当前阶段完成后，下一个阶段的 LLM 将读取并参考你的反馈来调整执行计划。",
+            sorted.len(),
+            sorted.join(", ")
+        )
+    } else {
+        "已记录反馈。当前无匹配的运行中项目，反馈将在新任务启动时生效。".to_string()
+    };
+
+    (injected_projects, plan_hint)
 }
 
 fn save_feedback(state: &BridgeState, content: &str, target_layer: &str, message_id: &str) {
@@ -2733,16 +2699,36 @@ fn save_feedback(state: &BridgeState, content: &str, target_layer: &str, message
 fn build_status_summary(state: &BridgeState, _target_layer: &str) -> String {
     let projects = list_all_projects(state);
     if projects.is_empty() {
-        return "No active projects.".to_string();
+        return "当前没有任何项目。".to_string();
     }
     let mut lines = Vec::new();
     for p in projects.iter().take(5) {
         let pid = p["projectId"].as_str().unwrap_or("");
-        let status = p["status"].as_str().unwrap_or("");
+        let status_raw = p["status"].as_str().unwrap_or("");
+        let status_cn = match status_raw {
+            "running" | "working" => "运行中",
+            "idle" => "空闲",
+            "done" | "completed" => "已完成",
+            "error" | "failed" => "错误",
+            "paused" => "已暂停",
+            other => other,
+        };
         let stage = p["lastCompletedStage"].as_u64().unwrap_or(0);
-        lines.push(format!("Project {pid}: {status} (stage {stage}/22)"));
+        let layer_name = match stage {
+            0..=4 => "想法层",
+            5..=8 => "实验层",
+            9..=14 => "编码层",
+            15..=18 => "执行层",
+            19..=22 => "写作层",
+            _ => "未知层",
+        };
+        lines.push(format!("项目 {pid}：{status_cn}（阶段 {stage}/22，{layer_name}）"));
     }
     lines.join("\n")
+}
+
+fn is_safe_path_component(s: &str) -> bool {
+    !s.is_empty() && !s.contains("..") && !s.contains('/') && !s.contains('\\')
 }
 
 fn slugify(text: &str, max_len: usize) -> String {
