@@ -24,6 +24,187 @@ use crate::metrics::{parse_metrics_from_file, parse_metrics_from_stdout};
 use crate::sandbox::{ExecutionResult, Sandbox};
 
 // ---------------------------------------------------------------------------
+// Package constants for dependency auto-detection
+// ---------------------------------------------------------------------------
+
+/// Packages already pre-installed in the Docker image.
+///
+/// Imports from these packages are skipped during auto-detect so we don't
+/// generate redundant pip install lines.
+pub const BUILTIN_PACKAGES: &[&str] = &[
+    // PyTorch ecosystem
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "torchdiffeq",
+    // Scientific / ML
+    "numpy",
+    "scipy",
+    "sklearn",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "tqdm",
+    "gymnasium",
+    "networkx",
+    // Extended ML ecosystem
+    "timm",
+    "einops",
+    "torchmetrics",
+    "albumentations",
+    "kornia",
+    "h5py",
+    "tensorboard",
+    // HuggingFace / LLM stack
+    "transformers",
+    "datasets",
+    "accelerate",
+    "peft",
+    "trl",
+    "bitsandbytes",
+    "sentencepiece",
+    "protobuf",
+    "tokenizers",
+    "safetensors",
+    "evaluate",
+    // Other pre-installed
+    "yaml",
+    "PIL",
+    "mujoco",
+    // Python stdlib
+    "os",
+    "sys",
+    "math",
+    "random",
+    "json",
+    "csv",
+    "re",
+    "time",
+    "collections",
+    "itertools",
+    "functools",
+    "pathlib",
+    "typing",
+    "dataclasses",
+    "abc",
+    "copy",
+    "io",
+    "logging",
+    "argparse",
+    "datetime",
+    "hashlib",
+    "pickle",
+    "subprocess",
+    "shutil",
+    "tempfile",
+    "warnings",
+    "unittest",
+    "contextlib",
+    "operator",
+    "string",
+    "textwrap",
+    "struct",
+    "statistics",
+    "glob",
+    "urllib",
+    "http",
+    "email",
+    "html",
+    "xml",
+];
+
+/// Maps Python import names to their pip package names when they differ.
+///
+/// e.g. `import cv2` → `pip install opencv-python`
+pub const IMPORT_TO_PIP: &[(&str, &str)] = &[
+    ("torchdiffeq", "torchdiffeq"),
+    ("torch_geometric", "torch-geometric"),
+    ("torchvision", "torchvision"),
+    ("torchaudio", "torchaudio"),
+    ("cv2", "opencv-python"),
+    ("PIL", "Pillow"),
+    ("sklearn", "scikit-learn"),
+    ("yaml", "PyYAML"),
+    ("gym", "gymnasium"),
+    ("ogb", "ogb"),
+    ("dgl", "dgl"),
+    ("lightning", "lightning"),
+    ("pytorch_lightning", "pytorch-lightning"),
+    ("wandb", "wandb"),
+    ("optuna", "optuna"),
+];
+
+/// Scan `.py` files in `staging_dir` for import statements and return the list
+/// of pip package names that need installing.
+///
+/// Skips packages in [`BUILTIN_PACKAGES`] and any local module (a `.py` file
+/// in the same directory).  Uses [`IMPORT_TO_PIP`] to translate import names
+/// to pip names.
+pub fn detect_pip_packages(staging_dir: &std::path::Path) -> Vec<String> {
+    let import_re = regex::Regex::new(r"(?m)^\s*(?:import|from)\s+([\w.]+)")
+        .expect("import regex");
+
+    // Collect local module names (stems of .py files in staging_dir).
+    let local_modules: std::collections::HashSet<String> = staging_dir
+        .read_dir()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()) == Some("py") {
+                p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let builtin_set: std::collections::HashSet<&str> = BUILTIN_PACKAGES.iter().copied().collect();
+    let pip_map: std::collections::HashMap<&str, &str> = IMPORT_TO_PIP.iter().copied().collect();
+
+    let mut detected: Vec<String> = Vec::new();
+
+    if let Ok(entries) = staging_dir.read_dir() {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("py") {
+                continue;
+            }
+            // Skip setup.py — don't scan for experiment deps there.
+            if path.file_name().and_then(|n| n.to_str()) == Some("setup.py") {
+                continue;
+            }
+            let text = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            for cap in import_re.captures_iter(&text) {
+                let top_module = cap[1].split('.').next().unwrap_or("").to_string();
+                if builtin_set.contains(top_module.as_str()) {
+                    continue;
+                }
+                if local_modules.contains(&top_module) {
+                    continue;
+                }
+                let pip_name = pip_map
+                    .get(top_module.as_str())
+                    .copied()
+                    .unwrap_or(top_module.as_str())
+                    .to_string();
+                if !detected.contains(&pip_name) {
+                    detected.push(pip_name);
+                }
+            }
+        }
+    }
+
+    detected
+}
+
+// ---------------------------------------------------------------------------
 // Network policy
 // ---------------------------------------------------------------------------
 
@@ -92,7 +273,7 @@ impl DockerSandbox {
         // Volume mounts: staging dir → /workspace
         let workspace_mount = Mount {
             target: Some("/workspace".to_string()),
-            source: Some(staging_dir.to_string_lossy().to_string()),
+            source: Some(staging_dir.to_string_lossy().into_owned()),
             typ: Some(MountTypeEnum::BIND),
             read_only: Some(false),
             ..Default::default()
@@ -107,7 +288,7 @@ impl DockerSandbox {
         if system_datasets.is_dir() {
             mounts.push(Mount {
                 target: Some("/workspace/data".to_string()),
-                source: Some(system_datasets.to_string_lossy().to_string()),
+                source: Some(system_datasets.to_string_lossy().into_owned()),
                 typ: Some(MountTypeEnum::BIND),
                 read_only: Some(true),
                 ..Default::default()
@@ -115,7 +296,7 @@ impl DockerSandbox {
         } else if user_datasets.is_dir() {
             mounts.push(Mount {
                 target: Some("/workspace/data".to_string()),
-                source: Some(user_datasets.to_string_lossy().to_string()),
+                source: Some(user_datasets.to_string_lossy().into_owned()),
                 typ: Some(MountTypeEnum::BIND),
                 read_only: Some(false),
                 ..Default::default()
@@ -131,7 +312,7 @@ impl DockerSandbox {
         if hf_host.is_dir() {
             mounts.push(Mount {
                 target: Some(hf_container.to_string()),
-                source: Some(hf_host.to_string_lossy().to_string()),
+                source: Some(hf_host.to_string_lossy().into_owned()),
                 typ: Some(MountTypeEnum::BIND),
                 read_only: Some(true),
                 ..Default::default()
@@ -226,12 +407,73 @@ impl DockerSandbox {
 
     /// Write `requirements.txt` into `staging_dir` from `pip_pre_install`.
     async fn write_requirements(&self, staging_dir: &std::path::Path) -> Result<()> {
-        if self.config.pip_pre_install.is_empty() {
+        let req_path = staging_dir.join("requirements.txt");
+
+        // Read existing requirements (LLM-generated) to avoid duplicates.
+        let mut existing: std::collections::HashSet<String> = std::collections::HashSet::new();
+        if req_path.exists() {
+            if let Ok(text) = std::fs::read_to_string(&req_path) {
+                for line in text.lines() {
+                    let line = line.trim();
+                    if !line.is_empty() && !line.starts_with('#') {
+                        // Strip version specifier to get bare package name.
+                        let pkg = line
+                            .split(|c: char| matches!(c, '>' | '<' | '=' | '!' | '~' | '['))
+                            .next()
+                            .unwrap_or(line)
+                            .trim()
+                            .to_lowercase();
+                        existing.insert(pkg);
+                    }
+                }
+            }
+        }
+
+        let mut packages: Vec<String> = Vec::new();
+
+        // From config pip_pre_install.
+        for pkg in &self.config.pip_pre_install {
+            let base = pkg
+                .split(|c: char| matches!(c, '>' | '<' | '=' | '!' | '~' | '['))
+                .next()
+                .unwrap_or(pkg)
+                .trim()
+                .to_lowercase();
+            if !existing.contains(&base) {
+                packages.push(pkg.clone());
+                existing.insert(base);
+            }
+        }
+
+        // Auto-detect from imports when enabled.
+        if self.config.auto_install_deps {
+            for pip_name in detect_pip_packages(staging_dir) {
+                let base = pip_name.to_lowercase();
+                if !existing.contains(&base) {
+                    packages.push(pip_name.clone());
+                    existing.insert(base);
+                }
+            }
+        }
+
+        if packages.is_empty() && !req_path.exists() {
             return Ok(());
         }
-        let req_path = staging_dir.join("requirements.txt");
-        let content = self.config.pip_pre_install.join("\n") + "\n";
-        tokio::fs::write(&req_path, &content).await?;
+
+        if !packages.is_empty() {
+            let mut content = if req_path.exists() {
+                std::fs::read_to_string(&req_path).unwrap_or_default() + "\n# Auto-detected by mol-experiment\n"
+            } else {
+                String::new()
+            };
+            for pkg in &packages {
+                content.push_str(pkg);
+                content.push('\n');
+            }
+            tokio::fs::write(&req_path, &content).await?;
+            info!("requirements.txt updated with: {:?}", packages);
+        }
+
         Ok(())
     }
 
@@ -483,6 +725,80 @@ fn dirs_next_home() -> std::path::PathBuf {
     std::env::var("HOME")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_builtin_packages_contains_torch() {
+        assert!(BUILTIN_PACKAGES.contains(&"torch"));
+    }
+
+    #[test]
+    fn test_builtin_packages_contains_stdlib() {
+        assert!(BUILTIN_PACKAGES.contains(&"os"));
+        assert!(BUILTIN_PACKAGES.contains(&"sys"));
+        assert!(BUILTIN_PACKAGES.contains(&"math"));
+    }
+
+    #[test]
+    fn test_import_to_pip_cv2() {
+        let map: std::collections::HashMap<&str, &str> = IMPORT_TO_PIP.iter().copied().collect();
+        assert_eq!(map.get("cv2"), Some(&"opencv-python"));
+    }
+
+    #[test]
+    fn test_import_to_pip_pil() {
+        let map: std::collections::HashMap<&str, &str> = IMPORT_TO_PIP.iter().copied().collect();
+        assert_eq!(map.get("PIL"), Some(&"Pillow"));
+    }
+
+    #[test]
+    fn test_import_to_pip_sklearn() {
+        let map: std::collections::HashMap<&str, &str> = IMPORT_TO_PIP.iter().copied().collect();
+        assert_eq!(map.get("sklearn"), Some(&"scikit-learn"));
+    }
+
+    #[test]
+    fn test_detect_pip_packages_skips_builtins() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Write a file that imports only builtins.
+        std::fs::write(dir.path().join("main.py"), "import torch\nimport os\n").unwrap();
+        let pkgs = detect_pip_packages(dir.path());
+        assert!(pkgs.is_empty(), "builtins should be skipped: {:?}", pkgs);
+    }
+
+    #[test]
+    fn test_detect_pip_packages_finds_third_party() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("main.py"), "import torch\nimport optuna\n").unwrap();
+        let pkgs = detect_pip_packages(dir.path());
+        // optuna is in IMPORT_TO_PIP (maps to "optuna") and not in BUILTIN_PACKAGES.
+        assert!(pkgs.contains(&"optuna".to_string()), "got: {:?}", pkgs);
+    }
+
+    #[test]
+    fn test_detect_pip_packages_translates_cv2() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("main.py"), "import cv2\n").unwrap();
+        let pkgs = detect_pip_packages(dir.path());
+        assert!(pkgs.contains(&"opencv-python".to_string()), "got: {:?}", pkgs);
+    }
+
+    #[test]
+    fn test_detect_pip_packages_skips_local_modules() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("main.py"), "import mymodule\n").unwrap();
+        std::fs::write(dir.path().join("mymodule.py"), "x = 1\n").unwrap();
+        let pkgs = detect_pip_packages(dir.path());
+        assert!(!pkgs.contains(&"mymodule".to_string()), "local module should be skipped: {:?}", pkgs);
+    }
 }
 
 /// Detect the available GPU accelerator type.

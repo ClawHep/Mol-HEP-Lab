@@ -71,12 +71,6 @@ impl WebSearchAgentResult {
     pub fn to_context_string(&self, max_length: usize) -> String {
         let mut ctx = String::with_capacity(max_length.min(64_000));
 
-        // Header
-        ctx.push_str(&format!(
-            "# Web Research: {}\n\n",
-            self.topic
-        ));
-
         // AI Summary
         if !self.search_answer.is_empty() {
             ctx.push_str("## AI Search Summary\n\n");
@@ -86,7 +80,7 @@ impl WebSearchAgentResult {
 
         // Web Results
         if !self.web_results.is_empty() {
-            ctx.push_str("## Web Results\n\n");
+            ctx.push_str("## Web Search Results\n\n");
             for (i, r) in self.web_results.iter().enumerate() {
                 ctx.push_str(&format!(
                     "### {}. {}\n**URL:** {}\n\n{}\n\n",
@@ -103,7 +97,7 @@ impl WebSearchAgentResult {
 
         // Scholar Papers
         if !self.scholar_papers.is_empty() {
-            ctx.push_str("## Scholar Papers\n\n");
+            ctx.push_str("## Google Scholar Papers\n\n");
             for (i, p) in self.scholar_papers.iter().enumerate() {
                 ctx.push_str(&format!(
                     "### {}. {} ({})\n**Authors:** {}\n**Citations:** {}\n**URL:** {}\n\n{}\n\n",
@@ -217,7 +211,7 @@ impl Default for WebSearchAgentConfig {
             enable_crawling: true,
             enable_pdf: true,
             max_web_results: 10,
-            max_scholar_results: 5,
+            max_scholar_results: 10,
             max_crawl_urls: 3,
         }
     }
@@ -351,7 +345,7 @@ impl WebSearchAgent {
             .collect()
     }
 
-    /// Find PDF URLs among search results.
+    /// Find PDF URLs among search results (capped at 3, matching Python behaviour).
     pub fn find_pdf_urls(results: &[WebSearchResult]) -> Vec<String> {
         results
             .iter()
@@ -359,6 +353,7 @@ impl WebSearchAgent {
                 let lower = r.url.to_lowercase();
                 lower.ends_with(".pdf") || lower.contains(".pdf?")
             })
+            .take(3)
             .map(|r| r.url.clone())
             .collect()
     }

@@ -166,8 +166,8 @@ fn read_prior_artifact(run_dir: &Path, filename: &str) -> Option<String> {
     // Sort: highest stage number first, non-versioned before versioned within
     // the same base name.
     stage_dirs.sort_by(|a, b| {
-        let an = a.file_name().to_string_lossy().to_string();
-        let bn = b.file_name().to_string_lossy().to_string();
+        let an = a.file_name().to_string_lossy().into_owned();
+        let bn = b.file_name().to_string_lossy().into_owned();
 
         fn sort_key(name: &str) -> (String, i32) {
             if let Some((base, ver)) = name.rsplit_once("_v") {
@@ -207,8 +207,8 @@ fn find_prior_file(run_dir: &Path, filename: &str) -> Option<PathBuf> {
         .collect();
 
     stage_dirs.sort_by(|a, b| {
-        let an = a.file_name().to_string_lossy().to_string();
-        let bn = b.file_name().to_string_lossy().to_string();
+        let an = a.file_name().to_string_lossy().into_owned();
+        let bn = b.file_name().to_string_lossy().into_owned();
 
         fn sort_key(name: &str) -> (String, i32) {
             if let Some((base, ver)) = name.rsplit_once("_v") {
@@ -237,48 +237,98 @@ fn find_prior_file(run_dir: &Path, filename: &str) -> Option<PathBuf> {
 ///
 /// Tries in order: ` ```yaml ` fence → ` ```yml ` fence → bare ` ``` ` fence
 /// → raw YAML detection (lines starting with `word:`).
-#[allow(dead_code)]
 fn extract_yaml_block(text: &str) -> String {
-    // Try ```yaml fence
-    if let Some(start) = text.find("```yaml") {
-        let after = &text[start + 7..];
-        if let Some(end) = after.find("```") {
-            return after[..end].trim().to_string();
+    // Pre-strip ACP noise: [thinking]...[/thinking] and [plan]...\n\n blocks
+    // Mirror of Python's _extract_yaml_block pre-processing step.
+    let cleaned: String = {
+        // Strip [thinking] blocks up to the next ``` fence, uppercase line, or end
+        let mut s = String::with_capacity(text.len());
+        let mut rest = text;
+        while let Some(start) = rest.find("[thinking]") {
+            s.push_str(&rest[..start]);
+            let after = &rest[start..];
+            // Find end: next ```  or next uppercase-leading line or end
+            let end_pos = after[10..]
+                .find("```")
+                .map(|p| 10 + p)
+                .or_else(|| {
+                    after[10..]
+                        .lines()
+                        .skip(1)
+                        .enumerate()
+                        .find(|(_, l)| l.starts_with(|c: char| c.is_uppercase()))
+                        .map(|(i, _)| {
+                            after[10..].lines().take(i + 1).map(|l| l.len() + 1).sum::<usize>() + 10
+                        })
+                })
+                .unwrap_or(after.len());
+            rest = &rest[start + end_pos..];
         }
-    }
-    // Try ```yml fence
-    if let Some(start) = text.find("```yml") {
-        let after = &text[start + 6..];
-        if let Some(end) = after.find("```") {
-            return after[..end].trim().to_string();
+        s.push_str(rest);
+        // Strip [plan]...\n\n blocks
+        let mut out = String::with_capacity(s.len());
+        let mut rem = s.as_str();
+        while let Some(start) = rem.find("[plan]") {
+            out.push_str(&rem[..start]);
+            let after = &rem[start..];
+            let end_pos = after.find("\n\n").map(|p| p + 2).unwrap_or(after.len());
+            rem = &rem[start + end_pos..];
         }
+        out.push_str(rem);
+        out
+    };
+
+    // Helper: extract from a single fence-delimited string
+    fn extract_from(src: &str, fence: &str) -> Option<String> {
+        let skip = fence.len();
+        src.find(fence).and_then(|start| {
+            let after = &src[start + skip..];
+            after.find("```").map(|end| after[..end].trim().to_string())
+        })
     }
-    // Try bare ``` fence
-    if let Some(start) = text.find("```") {
-        let after = &text[start + 3..];
-        if let Some(end) = after.find("```") {
-            let block = after[..end].trim();
-            // Only treat as YAML if it looks like YAML (contains key: value)
-            if block.contains(": ") || block.starts_with('-') {
-                return block.to_string();
+    fn extract_bare(src: &str) -> Option<String> {
+        src.find("```").and_then(|start| {
+            let after = &src[start + 3..];
+            after.find("```").map(|end| {
+                let block = after[..end].trim();
+                if !block.is_empty() { Some(block.to_string()) } else { None }
+            }).flatten()
+        })
+    }
+
+    // Try markdown fences on cleaned text first (mirrors Python)
+    if let Some(v) = extract_from(&cleaned, "```yaml") { return v; }
+    if let Some(v) = extract_from(&cleaned, "```yml")  { return v; }
+    if let Some(v) = extract_bare(&cleaned)            { return v; }
+
+    // Fall back to original text in case cleaning removed too much (mirrors Python)
+    if let Some(v) = extract_from(text, "```yaml") { return v; }
+    if let Some(v) = extract_from(text, "```yml")  { return v; }
+    if let Some(v) = extract_bare(text)            { return v; }
+
+    // Last resort: collect lines that look like raw YAML from cleaned text
+    let mut yaml_lines: Vec<&str> = Vec::new();
+    let mut in_yaml = false;
+    for line in cleaned.lines() {
+        let t = line.trim();
+        if !in_yaml {
+            if t.split_once(':').map(|(k, _)| k.chars().all(|c| c.is_ascii_lowercase() || c == '_')).unwrap_or(false) {
+                in_yaml = true;
+            }
+        }
+        if in_yaml {
+            if !t.is_empty() && !t.starts_with('#') {
+                yaml_lines.push(line);
+            } else if t.is_empty() && !yaml_lines.is_empty() {
+                yaml_lines.push(line);
             }
         }
     }
-    // Fall back: collect lines that look like raw YAML
-    let yaml_lines: Vec<&str> = text
-        .lines()
-        .filter(|l| {
-            let t = l.trim();
-            !t.is_empty()
-                && (t.starts_with('-')
-                    || t.contains(": ")
-                    || t.ends_with(':'))
-        })
-        .collect();
     if !yaml_lines.is_empty() {
-        return yaml_lines.join("\n");
+        return yaml_lines.join("\n").trim().to_string();
     }
-    text.to_string()
+
+    text.trim().to_string()
 }
 
 /// Multi-strategy JSON parsing.
@@ -287,7 +337,6 @@ fn extract_yaml_block(text: &str) -> String {
 /// 2. Extract from ` ```json ` fences.
 /// 3. Balanced-brace matching (largest `{}` block first).
 /// 4. Balanced-bracket matching for arrays.
-#[allow(dead_code)]
 fn safe_json_loads(text: &str) -> Option<serde_json::Value> {
     // 1. Direct parse
     if let Ok(v) = serde_json::from_str(text.trim()) {
@@ -373,18 +422,14 @@ fn safe_json_loads(text: &str) -> Option<serde_json::Value> {
 fn detect_domain(topic: &str) -> (&'static str, &'static str, &'static str) {
     let lower = topic.to_lowercase();
 
-    // Theoretical intent words
+    // Theoretical intent words — mirrors Python's _detect_domain
     let theoretical_words = [
         "derive",
         "prove",
         "mathematical formulation",
-        "theorem",
-        "proof",
-        "axiom",
-        "formal",
-        "theoretical",
-        "conjecture",
-        "lemma",
+        "mathematical proof",
+        "formal proof",
+        "formalism",
     ];
     let has_theoretical_intent = theoretical_words.iter().any(|w| lower.contains(w));
 
@@ -561,7 +606,7 @@ fn detect_domain(topic: &str) -> (&'static str, &'static str, &'static str) {
         let mut score = keywords.iter().filter(|kw| lower.contains(*kw)).count();
         // Boost non-empirical domains for theoretical intent
         if has_theoretical_intent && matches!(id, "mathematics" | "physics" | "economics") {
-            score += 3;
+            score += 1;
         }
         if score > best_score {
             best_score = score;
@@ -578,24 +623,39 @@ fn detect_domain(topic: &str) -> (&'static str, &'static str, &'static str) {
 pub fn build_fallback_queries(topic: &str) -> Vec<String> {
     let mut queries: Vec<String> = Vec::new();
 
-    // Chinese-to-English domain mapping
+    // Chinese-to-English domain mapping — 28 entries, mirrors Python's _CHINESE_ENGLISH_DOMAIN_MAP
     let zh_map: &[(&str, &[&str])] = &[
-        ("具身智能", &["embodied intelligence", "embodied AI"]),
+        ("具身智能",   &["embodied intelligence", "embodied AI"]),
         ("视觉语言动作", &["vision language action", "VLA"]),
-        ("世界模型", &["world model"]),
-        ("机器人", &["robot", "robotics"]),
-        ("强化学习", &["reinforcement learning"]),
-        ("扩散策略", &["diffusion policy"]),
-        ("自主代理", &["autonomous agent"]),
-        ("大语言模型", &["large language model", "LLM"]),
-        ("神经网络", &["neural network"]),
-        ("深度学习", &["deep learning"]),
-        ("迁移学习", &["transfer learning"]),
-        ("自监督", &["self-supervised"]),
-        ("多模态", &["multimodal"]),
-        ("语言模型", &["language model"]),
-        ("视觉", &["vision"]),
-        ("最新研究", &["recent advances", "survey"]),
+        ("视觉语言模型", &["vision language model", "VLM"]),
+        ("世界模型",   &["world model"]),
+        ("动作模型",   &["action model"]),
+        ("机器人",     &["robot", "robotics"]),
+        ("操控",       &["manipulation"]),
+        ("抓取",       &["grasping"]),
+        ("导航",       &["navigation"]),
+        ("模仿学习",   &["imitation learning"]),
+        ("强化学习",   &["reinforcement learning"]),
+        ("扩散策略",   &["diffusion policy"]),
+        ("视频生成",   &["video generation"]),
+        ("动作预测",   &["action prediction"]),
+        ("架构",       &["architecture"]),
+        ("最新",       &["latest", "recent", "state of the art"]),
+        ("评估",       &["evaluation", "benchmark"]),
+        ("应用",       &["application"]),
+        ("调研",       &["survey"]),
+        ("研究",       &["research"]),
+        ("方向",       &["direction"]),
+        ("联合建模",   &["joint modeling", "unified model"]),
+        ("联合训练",   &["joint training"]),
+        ("跨具身",     &["cross-embodiment"]),
+        ("灵巧操作",   &["dexterous manipulation"]),
+        ("双臂",       &["bimanual", "dual-arm"]),
+        ("长时序",     &["long-horizon"]),
+        ("泛化",       &["generalization"]),
+        ("零样本",     &["zero-shot"]),
+        ("预训练",     &["pretraining", "pre-training"]),
+        ("微调",       &["fine-tuning"]),
     ];
 
     // Check if the topic contains Chinese characters
@@ -671,96 +731,35 @@ pub fn build_fallback_queries(topic: &str) -> Vec<String> {
         }
     }
 
+    // Suffix queries for English topics — mirrors Python's suffix loop
+    // Build a short version of the topic from ASCII word-tokens (max 60 chars)
+    let topic_short: String = {
+        let tokens: String = topic
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if tokens.is_empty() {
+            topic.chars().take(60).collect()
+        } else {
+            tokens.chars().take(60).collect::<String>().trim().to_string()
+        }
+    };
+    for suffix in &["survey", "review", "benchmark", "state of the art", "recent advances"] {
+        if queries.len() >= 8 {
+            break;
+        }
+        let q = format!("{} {}", topic_short, suffix);
+        if !queries.iter().any(|x| x.to_lowercase() == q.to_lowercase()) {
+            queries.push(q);
+        }
+    }
+
     queries.dedup();
     queries.truncate(12);
     queries
 }
 
-/// Read `human_feedback.jsonl` from `run_dir`, returning formatted feedback
-/// lines as a single string.  Lines already consumed (tracked via a stamp
-/// file) are excluded.
-#[allow(dead_code)]
-fn load_human_feedback(run_dir: &Path, _stage: Stage) -> String {
-    let jsonl_path = run_dir.join("human_feedback.jsonl");
-    let stamp_path = run_dir.join(".feedback_consumed_up_to");
-
-    let consumed_up_to: Option<String> = std::fs::read_to_string(&stamp_path)
-        .ok()
-        .map(|s| s.trim().to_string());
-
-    let content = match std::fs::read_to_string(&jsonl_path) {
-        Ok(c) => c,
-        Err(_) => return String::new(),
-    };
-
-    let mut lines_out: Vec<String> = Vec::new();
-    let mut last_ts: Option<String> = None;
-    let mut past_consumed = consumed_up_to.is_none();
-
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-            let ts = val.get("timestamp").and_then(|v| v.as_str()).map(String::from);
-            let layer = val
-                .get("layer")
-                .and_then(|v| v.as_str())
-                .unwrap_or("user");
-            let text = val
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            if !past_consumed {
-                if let (Some(t), Some(cu)) = (&ts, &consumed_up_to) {
-                    if t == cu {
-                        past_consumed = true;
-                    }
-                }
-                continue;
-            }
-
-            lines_out.push(format!("- [{}] {}", layer, text));
-            if let Some(t) = ts {
-                last_ts = Some(t);
-            }
-        }
-    }
-
-    // Update stamp
-    if let Some(ref ts) = last_ts {
-        let _ = std::fs::write(&stamp_path, ts);
-    }
-
-    lines_out.join("\n")
-}
-
-/// Try to load evolution lessons from `run_dir/evolution/` and return them
-/// as a formatted string.  Returns empty string on any error.
-#[allow(dead_code)]
-fn get_evolution_overlay(run_dir: &Path, stage_name: &str) -> String {
-    let evo_dir = run_dir.join("evolution");
-    if !evo_dir.is_dir() {
-        return String::new();
-    }
-    // Try stage-specific file first, then generic lessons file
-    let candidates = [
-        evo_dir.join(format!("{}_lessons.md", stage_name)),
-        evo_dir.join("lessons.md"),
-        evo_dir.join("evolution.md"),
-    ];
-    for path in &candidates {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            if !content.trim().is_empty() {
-                return format!("\n## Evolution Lessons\n{}\n", content.trim());
-            }
-        }
-    }
-    String::new()
-}
 
 /// Build a research context preamble string for LLM prompts.
 pub fn build_context_preamble(config: &MolConfig, run_dir: &Path, opts: &ContextOpts) -> String {
@@ -831,7 +830,7 @@ pub fn collect_experiment_results(
             if let Ok(content) = std::fs::read_to_string(&metrics_path) {
                 if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
                     if let Some(v) = val.get(metric_key).and_then(|v| v.as_f64()) {
-                        let run_name = entry.file_name().to_string_lossy().to_string();
+                        let run_name = entry.file_name().to_string_lossy().into_owned();
                         values.push((run_name, v));
                     }
                 }
@@ -1141,25 +1140,6 @@ pub async fn execute_stage(stage: Stage, context: &StageContext) -> Result<Stage
     );
 
     Ok(result)
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Return a stub `Done` result listing `artifact_names` as produced outputs.
-///
-/// Retained for use in tests and as a fallback during development.
-#[allow(dead_code)]
-async fn stub_stage(stage: Stage, artifact_names: &[&str]) -> StageResult {
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: artifact_names.iter().map(|s| s.to_string()).collect(),
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
 }
 
 // ---------------------------------------------------------------------------

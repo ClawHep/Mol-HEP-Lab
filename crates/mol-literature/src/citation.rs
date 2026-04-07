@@ -610,6 +610,75 @@ pub fn filter_verified_bibtex(
     }
 }
 
+/// Remove hallucinated citations from paper text.
+///
+/// - `HALLUCINATED` keys are removed from every cite command they appear in.
+/// - `SUSPICIOUS`, `VERIFIED`, and `SKIPPED` entries are left as-is.
+///
+/// Supports two citation formats:
+/// - LaTeX: `\cite{key1, key2, key3}`
+/// - Markdown: `[key1, key2]` or `[key1; key2]` where keys match `[A-Za-z]+\d{4}[A-Za-z]*`
+///
+/// After removing keys the function also cleans up:
+/// - Multiple consecutive spaces → single space
+/// - Empty `()` or `[]` parenthetical artifacts
+pub fn annotate_paper_hallucinations(paper_text: &str, report: &VerificationReport) -> String {
+    let hallucinated: std::collections::HashSet<&str> = report
+        .results
+        .iter()
+        .filter(|r| r.status == VerifyStatus::Hallucinated)
+        .map(|r| r.cite_key.as_str())
+        .collect();
+
+    if hallucinated.is_empty() {
+        return paper_text.to_owned();
+    }
+
+    // Replace \cite{...} removing only hallucinated keys.
+    let latex_re = regex::Regex::new(r"\\cite\{([^}]+)\}").unwrap();
+    let text = latex_re.replace_all(paper_text, |caps: &regex::Captures| {
+        let keys: Vec<&str> = caps[1]
+            .split(',')
+            .map(str::trim)
+            .filter(|k| !k.is_empty() && !hallucinated.contains(*k))
+            .collect();
+        if keys.is_empty() {
+            String::new()
+        } else {
+            format!("\\cite{{{}}}", keys.join(", "))
+        }
+    });
+
+    // Replace [key1, key2] / [key1; key2] Markdown citations.
+    let cite_key_pat = r"[A-Za-z]+\d{4}[A-Za-z]*";
+    let md_re = regex::Regex::new(&format!(
+        r"\[({ck}(?:\s*[,;]\s*{ck})*)\]",
+        ck = cite_key_pat
+    ))
+    .unwrap();
+
+    let text = md_re.replace_all(&text, |caps: &regex::Captures| {
+        let keys: Vec<&str> = regex::Regex::new(r"[,;]\s*")
+            .unwrap()
+            .split(&caps[1])
+            .map(str::trim)
+            .filter(|k| !k.is_empty() && !hallucinated.contains(*k))
+            .collect();
+        if keys.is_empty() {
+            String::new()
+        } else {
+            format!("[{}]", keys.join(", "))
+        }
+    });
+
+    // Clean up artifacts.
+    let text = regex::Regex::new(r" {2,}").unwrap().replace_all(&text, " ");
+    let text = regex::Regex::new(r"\(\s*\)").unwrap().replace_all(&text, "");
+    let text = regex::Regex::new(r"\[\s*\]").unwrap().replace_all(&text, "");
+
+    text.into_owned()
+}
+
 // ---------------------------------------------------------------------------
 // Atom title extractor (minimal, no full XML parse needed here)
 // ---------------------------------------------------------------------------

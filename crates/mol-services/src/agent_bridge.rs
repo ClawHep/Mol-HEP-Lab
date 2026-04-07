@@ -40,7 +40,7 @@ pub fn stage_to_layer(stage: u32) -> Option<&'static str> {
         9 => Some("experiment"),
         10..=13 => Some("coding"),
         14..=18 => Some("execution"),
-        19..=26 => Some("writing"),
+        19..=22 => Some("writing"),
         _ => None,
     }
 }
@@ -52,7 +52,7 @@ pub fn layer_stages(layer: &str) -> &'static [u32] {
         "experiment" => &[9],
         "coding" => &[10, 11, 12, 13],
         "execution" => &[14, 15, 16, 17, 18],
-        "writing" => &[19, 20, 21, 22, 23, 24, 25, 26],
+        "writing" => &[19, 20, 21, 22],
         _ => &[],
     }
 }
@@ -64,7 +64,7 @@ pub fn layer_range(layer: &str) -> (u32, u32) {
         "experiment" => (9, 9),
         "coding" => (10, 13),
         "execution" => (14, 18),
-        "writing" => (19, 26),
+        "writing" => (19, 22),
         _ => (1, 22),
     }
 }
@@ -683,15 +683,6 @@ impl BridgeState {
 // Message builders
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
-fn sys_agent_value() -> Value {
-    serde_json::json!({
-        "id": "system", "name": "System", "layer": "idea",
-        "runId": "", "status": "idle", "currentStage": null,
-        "currentTask": "", "stageProgress": {}, "projectId": "", "roleTag": ""
-    })
-}
-
 pub fn msg_agent_update(agent: &MolAgent) -> Value {
     serde_json::json!({ "type": "agent_update", "payload": agent.to_frontend() })
 }
@@ -759,7 +750,7 @@ pub fn msg_log_agent(agent: &MolAgent, message: &str, level: &str) -> Value {
 }
 
 pub fn msg_log_sys(message: &str, level: &str) -> Value {
-    msg_log("system", "System", "idea", None, message, level)
+    msg_log("system", "系统", "idea", None, message, level)
 }
 
 pub fn msg_queue_update(state: &BridgeState) -> Value {
@@ -1026,6 +1017,15 @@ pub fn poll_agent(agent: &mut MolAgent) -> Vec<Value> {
 // Agent lifecycle
 // ---------------------------------------------------------------------------
 
+/// Create a new agent and register it in the state.
+/// Returns the agent id.
+fn create_agent(state: &BridgeState, name: &str, layer: &str) -> String {
+    let agent = MolAgent::new(name, layer);
+    let id = agent.id.clone();
+    state.agents.insert(id.clone(), agent);
+    id
+}
+
 fn assign_task_to_agent(agent: &mut MolAgent, task: &Task) {
     agent.project_id = task.project_id.clone();
     agent.run_dir = task.run_dir.clone();
@@ -1239,7 +1239,7 @@ pub fn submit_new_project(
 
     let run_dir_path = state.projects_dir().join(project_id);
     let _ = std::fs::create_dir_all(&run_dir_path);
-    let run_dir = run_dir_path.to_string_lossy().to_string();
+    let run_dir = run_dir_path.to_string_lossy().into_owned();
     save_project_meta(&run_dir, project_id, config_path, topic, mode);
 
     if disc_mode {
@@ -1354,7 +1354,7 @@ pub fn list_all_projects(state: &BridgeState) -> Vec<Value> {
     entries.sort_by_key(|e| e.file_name());
 
     for entry in entries {
-        let project_id = entry.file_name().to_string_lossy().to_string();
+        let project_id = entry.file_name().to_string_lossy().into_owned();
         let proj_dir = entry.path();
 
         let meta = read_json(&proj_dir.join("project_meta.json"));
@@ -1533,7 +1533,7 @@ pub fn trigger_discussion(state: &BridgeState, group_project_id: &str) -> Vec<Va
         .join(&group.project_id)
         .join("discussion");
     let _ = std::fs::create_dir_all(&disc_dir);
-    group.discussion_output_dir = disc_dir.to_string_lossy().to_string();
+    group.discussion_output_dir = disc_dir.to_string_lossy().into_owned();
 
     let synthesis_dirs = group.synthesis_dirs();
     let agent_ids = group.agent_ids.clone();
@@ -2051,7 +2051,7 @@ pub fn on_agent_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
                 best_agent_id: String::new(),
                 status: DiscussionStatus::Gathering,
                 discussion_process: None,
-                discussion_output_dir: disc_dir.to_string_lossy().to_string(),
+                discussion_output_dir: disc_dir.to_string_lossy().into_owned(),
                 is_cross_project: true,
             };
             state.discussion_waiting.remove(agent_id);
@@ -2222,7 +2222,7 @@ fn scan_existing_artifacts(state: &BridgeState) -> Vec<Value> {
         if !proj_dir.is_dir() {
             continue;
         }
-        let project_id = proj_dir.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let project_id = proj_dir.file_name().unwrap_or_default().to_string_lossy().into_owned();
         let mut seen = HashSet::new();
 
         // Collect run dirs
@@ -2411,12 +2411,35 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 messages.push(msg_feedback_ack(&format!("qs-{}", uid()), &summary, target_layer));
             } else {
                 // Treat as feedback
-                save_feedback(state, &content, target_layer, &format!("fb-{}", uid()));
-                messages.push(msg_feedback_ack(
-                    &format!("fb-{}", uid()),
-                    "Feedback recorded and injected into active project contexts.",
-                    target_layer,
-                ));
+                let fb_id = format!("fb-{}", uid());
+                save_feedback(state, &content, target_layer, &fb_id);
+                // Count matching active projects
+                let injected_projects: Vec<String> = state
+                    .agents
+                    .iter()
+                    .filter(|e| {
+                        let a = e.value();
+                        !a.run_dir.is_empty()
+                            && (a.status == AgentStatus::Working || a.status == AgentStatus::Idle)
+                            && (target_layer == "all" || a.layer == target_layer)
+                            && !a.project_id.is_empty()
+                    })
+                    .map(|e| e.value().project_id.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                let plan_hint = if !injected_projects.is_empty() {
+                    let mut sorted = injected_projects.clone();
+                    sorted.sort();
+                    format!(
+                        "已将反馈注入 {} 个项目的 prompt 上下文中 ({})。当前阶段完成后，下一个阶段的 LLM 将读取并参考你的反馈来调整执行计划。",
+                        sorted.len(),
+                        sorted.join(", ")
+                    )
+                } else {
+                    "已记录反馈。当前无匹配的运行中项目，反馈将在新任务启动时生效。".to_string()
+                };
+                messages.push(msg_feedback_ack(&fb_id, &plan_hint, target_layer));
             }
         }
 
@@ -2435,7 +2458,7 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_default();
             let reference_uploads: Vec<Value> = data
-                .get("referenceUploads")
+                .get("referenceFiles")
                 .and_then(|v| v.as_array())
                 .cloned()
                 .unwrap_or_default();
@@ -2496,6 +2519,188 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
 
         "get_queues" => {
             messages.push(msg_queue_update(state));
+        }
+
+        "add_lobster" => {
+            let name = data
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("龙虾-{}", uid()));
+            let layer = data.get("layer").and_then(|v| v.as_str()).unwrap_or("idea").to_string();
+            let agent_id = create_agent(state, &name, &layer);
+            if let Some(agent_ref) = state.agents.get(&agent_id) {
+                messages.push(msg_agent_update(agent_ref.value()));
+                messages.push(msg_log(
+                    &agent_ref.id,
+                    &agent_ref.name,
+                    &agent_ref.layer,
+                    None,
+                    &format!("龙虾已加入 {} 层", layer),
+                    "info",
+                ));
+            }
+        }
+
+        "remove_lobster" => {
+            let agent_id = data.get("agentId").and_then(|v| v.as_str()).unwrap_or("");
+            if let Some((_, mut agent)) = state.agents.remove(agent_id) {
+                messages.extend(stop_agent(&mut agent));
+            }
+        }
+
+        "submit_project" => {
+            let project_id = data
+                .get("projectId")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("proj-{}", uid()));
+            let config_path = data.get("configPath").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let topic = data.get("topic").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let disc_mode = *state.discussion_mode.read().await;
+            messages.extend(submit_new_project(state, &project_id, &config_path, &topic, "lab", disc_mode));
+            messages.extend(schedule_idle_agents(state));
+            messages.push(msg_project_list(list_all_projects(state)));
+        }
+
+        "stop_agent" => {
+            let agent_id = data.get("agentId").and_then(|v| v.as_str()).unwrap_or("");
+            if let Some(mut ae) = state.agents.get_mut(agent_id) {
+                messages.extend(stop_agent(ae.value_mut()));
+            }
+        }
+
+        "get_shared_results" => {
+            // Result registry summary (placeholder — returns empty summary when no registry)
+            messages.push(msg_system("{}"));
+        }
+
+        "start_idea_factory" => {
+            let topic = data.get("topic").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let config_path = data.get("configPath").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let idea_count = data.get("ideaCount").and_then(|v| v.as_i64()).unwrap_or(0);
+            *state.idea_factory_topic.write().await = topic.clone();
+            *state.idea_factory_config.write().await = config_path;
+            *state.idea_factory_remaining.write().await = idea_count;
+            state.idea_factory_produced.store(0, Ordering::Relaxed);
+            let label = if idea_count == -1 { "无限".to_string() } else { idea_count.to_string() };
+            messages.push(msg_log_sys(
+                &format!("Idea 工厂已启动: topic={}... count={}", &topic.chars().take(50).collect::<String>(), label),
+                "info",
+            ));
+        }
+
+        "stop_idea_factory" => {
+            *state.idea_factory_remaining.write().await = 0;
+            let produced = state.idea_factory_produced.load(Ordering::Relaxed);
+            messages.push(msg_log_sys(
+                &format!("Idea 工厂已停止 (已产出 {} 个)", produced),
+                "info",
+            ));
+        }
+
+        "query_status" => {
+            let target_layer = data.get("targetLayer").and_then(|v| v.as_str()).unwrap_or("all");
+            let summary = build_status_summary(state, target_layer);
+            messages.push(msg_feedback_ack(&format!("qs-{}", uid()), &summary, target_layer));
+        }
+
+        "human_feedback" => {
+            let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let target_layer = data.get("targetLayer").and_then(|v| v.as_str()).unwrap_or("all").to_string();
+            let message_id = data
+                .get("messageId")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("fb-{}", uid()));
+
+            messages.push(msg_log_sys(
+                &format!(
+                    "收到人工反馈: {}{}",
+                    &content.chars().take(80).collect::<String>(),
+                    if content.len() > 80 { "..." } else { "" }
+                ),
+                "info",
+            ));
+
+            save_feedback(state, &content, &target_layer, &message_id);
+
+            let injected_projects: Vec<String> = state
+                .agents
+                .iter()
+                .filter(|e| {
+                    let a = e.value();
+                    !a.run_dir.is_empty()
+                        && (a.status == AgentStatus::Working || a.status == AgentStatus::Idle)
+                        && (target_layer == "all" || a.layer == target_layer)
+                        && !a.project_id.is_empty()
+                })
+                .map(|e| e.value().project_id.clone())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            // Also write feedback to each matching agent's run_dir
+            for entry in state.agents.iter() {
+                let a = entry.value();
+                if a.run_dir.is_empty() {
+                    continue;
+                }
+                if a.status != AgentStatus::Working && a.status != AgentStatus::Idle {
+                    continue;
+                }
+                if target_layer != "all" && a.layer != target_layer {
+                    continue;
+                }
+                let run_dir = PathBuf::from(&a.run_dir);
+                if !run_dir.exists() {
+                    continue;
+                }
+                let fb_path = run_dir.join("human_feedback.jsonl");
+                let entry_json = serde_json::json!({
+                    "id": message_id,
+                    "content": content,
+                    "targetLayer": target_layer,
+                    "timestamp": now_ms(),
+                });
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&fb_path) {
+                    use std::io::Write;
+                    let _ = writeln!(f, "{}", serde_json::to_string(&entry_json).unwrap_or_default());
+                }
+            }
+
+            let plan_hint = if !injected_projects.is_empty() {
+                let mut sorted = injected_projects.clone();
+                sorted.sort();
+                format!(
+                    "已将反馈注入 {} 个项目的 prompt 上下文中 ({})。当前阶段完成后，下一个阶段的 LLM 将读取并参考你的反馈来调整执行计划。",
+                    sorted.len(),
+                    sorted.join(", ")
+                )
+            } else {
+                "已记录反馈。当前无匹配的运行中项目，反馈将在新任务启动时生效。".to_string()
+            };
+            messages.push(msg_feedback_ack(&message_id, &plan_hint, &target_layer));
+        }
+
+        "get_download_url" => {
+            let project_id = data.get("projectId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let filename = data
+                .get("filename")
+                .and_then(|v| v.as_str())
+                .unwrap_or("latex_package.zip")
+                .to_string();
+            if !project_id.is_empty() {
+                messages.push(serde_json::json!({
+                    "type": "download_url",
+                    "payload": {
+                        "projectId": project_id,
+                        "filename": filename,
+                        "url": format!("/download/{}/{}", project_id, filename),
+                    }
+                }));
+            }
         }
 
         _ => {
@@ -2861,7 +3066,7 @@ pub fn check_s12_sanity_failure(state: &BridgeState, agent_id: &str) -> Vec<Valu
     // Find experiment dir from stage-11
     let exp_dir = PathBuf::from(&run_dir).join("stage-11/experiment");
     let exp_dir_str = if exp_dir.exists() {
-        exp_dir.to_string_lossy().to_string()
+        exp_dir.to_string_lossy().into_owned()
     } else {
         format!("{}/stage-11", run_dir)
     };
@@ -3063,7 +3268,7 @@ pub fn generate_config_from_template(
     std::fs::write(&out_path, &config_text)
         .map_err(|e| anyhow::anyhow!("配置生成失败: {e}"))?;
 
-    Ok(out_path.to_string_lossy().to_string())
+    Ok(out_path.to_string_lossy().into_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -3148,7 +3353,7 @@ pub fn persist_reference_uploads(project_dir: &Path, reference_uploads: &[Value]
                 match std::fs::write(&dest, &bytes) {
                     Ok(_) => {
                         info!("Saved reference upload: {}", dest.display());
-                        saved_paths.push(dest.to_string_lossy().to_string());
+                        saved_paths.push(dest.to_string_lossy().into_owned());
                     }
                     Err(e) => {
                         warn!("Failed to write reference upload {safe_name}: {e}");
@@ -3287,7 +3492,7 @@ pub fn quick_submit_project(
         "lab" | _ => {
             // Lab mode: one sub-agent per research angle
             let effective_angles: Vec<String> = if research_angles.is_empty() {
-                vec!["CV".to_string(), "VLM".to_string()]
+                vec!["CV".to_string()]
             } else {
                 research_angles.to_vec()
             };
@@ -3327,7 +3532,7 @@ pub fn quick_submit_project(
                     String::new()
                 });
 
-                let run_dir = sub_dir.to_string_lossy().to_string();
+                let run_dir = sub_dir.to_string_lossy().into_owned();
                 save_project_meta(&run_dir, project_id, &config_path, &angled_topic, "lab");
 
                 let task = Task {
@@ -3368,54 +3573,14 @@ pub fn quick_submit_project(
 // Idea factory stubs
 // ---------------------------------------------------------------------------
 
-/// Launch an idea-factory agent run. Not yet fully implemented.
-pub fn _launch_idea_factory_run(
-    _state: &BridgeState,
-    _agent_id: &str,
-    _batch_id: &str,
-) -> Vec<Value> {
-    warn!("_launch_idea_factory_run: not yet implemented");
-    Vec::new()
-}
-
 /// Called when an idea-factory agent completes all stages. Not yet fully implemented.
 pub fn _on_idea_factory_done(_state: &BridgeState, _agent_id: &str) -> Vec<Value> {
-    warn!("_on_idea_factory_done: not yet implemented");
     Vec::new()
 }
 
 /// Called when an idea-factory S7-only agent finishes. Not yet fully implemented.
 pub fn _on_idea_factory_s7_done(_state: &BridgeState, _agent_id: &str) -> Vec<Value> {
-    warn!("_on_idea_factory_s7_done: not yet implemented");
     Vec::new()
-}
-
-// ---------------------------------------------------------------------------
-// Cross-project discussion stub
-// ---------------------------------------------------------------------------
-
-/// Trigger a cross-project discussion. Not yet fully implemented.
-pub fn _trigger_cross_project_discussion(
-    _state: &BridgeState,
-    _project_a: &str,
-    _project_b: &str,
-) -> Vec<Value> {
-    warn!("_trigger_cross_project_discussion: not yet implemented");
-    Vec::new()
-}
-
-// ---------------------------------------------------------------------------
-// Model config stub
-// ---------------------------------------------------------------------------
-
-/// Create a model-specific YAML config. Not yet fully implemented.
-pub fn _create_model_config(
-    _state: &BridgeState,
-    _project_id: &str,
-    _model_name: &str,
-) -> anyhow::Result<String> {
-    warn!("_create_model_config: not yet implemented");
-    anyhow::bail!("_create_model_config not yet implemented")
 }
 
 // ---------------------------------------------------------------------------

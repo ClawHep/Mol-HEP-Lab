@@ -239,7 +239,7 @@ fn compute_similarity(
     let kw_sim = jaccard_keywords(hypothesis_keywords, &paper_keywords);
     if !hypothesis_title.is_empty() && !paper_title.is_empty() {
         let t_sim = sequence_similarity(hypothesis_title, paper_title);
-        (0.7 * kw_sim + 0.3 * t_sim * 4.0 / 10.0).min(1.0) // scale t_sim contribution
+        (0.7 * kw_sim + 0.3 * t_sim).min(1.0)
     } else {
         kw_sim
     }

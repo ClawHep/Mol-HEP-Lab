@@ -77,6 +77,21 @@ pub struct ScholarPaper {
     pub venue: String,
 }
 
+/// A Google Scholar author record returned by [`ScholarClient::search_author`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthorRecord {
+    /// Author's display name.
+    pub name: String,
+    /// Institutional affiliation shown on Scholar.
+    pub affiliation: String,
+    /// Google Scholar author profile ID.
+    pub scholar_id: String,
+    /// Total cited-by count as shown on Scholar (0 if not available).
+    pub citedby: u64,
+    /// Research interests listed on the author profile.
+    pub interests: Vec<String>,
+}
+
 impl ScholarPaper {
     /// Returns `true` if the paper has an actionable URL.
     pub fn has_url(&self) -> bool {
@@ -207,6 +222,140 @@ impl ScholarClient {
 
         debug!("Scholar: {} results for {:?}", results.len(), query);
         results
+    }
+
+    /// Retrieve papers that cite the given Google Scholar cluster ID.
+    ///
+    /// Uses Scholar's `cites=` query parameter.  Returns an empty `Vec` if
+    /// Scholar is unreachable or `scholar_id` is empty.
+    pub async fn get_citations(&self, scholar_id: &str, limit: usize) -> Vec<ScholarPaper> {
+        if scholar_id.is_empty() {
+            return Vec::new();
+        }
+        if !self.check_reachable().await {
+            return Vec::new();
+        }
+
+        let mut results = Vec::new();
+        let page_size = 10usize;
+        let mut start = 0usize;
+
+        while results.len() < limit {
+            self.rate_limit().await;
+
+            let url = format!(
+                "https://scholar.google.com/scholar?cites={}&start={}&num={}",
+                scholar_id,
+                start,
+                page_size.min(limit - results.len()),
+            );
+
+            let ua = self.next_user_agent();
+            debug!("Scholar citations GET {url} (ua: {ua})");
+
+            let resp = match self.client.get(&url).header("User-Agent", ua).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("Scholar citations request failed: {e}");
+                    self.reachable.store(2, Ordering::Relaxed);
+                    break;
+                }
+            };
+
+            if !resp.status().is_success() {
+                warn!("Scholar citations returned HTTP {}", resp.status());
+                break;
+            }
+
+            let html = match resp.text().await {
+                Ok(h) => h,
+                Err(e) => {
+                    warn!("Scholar citations body read failed: {e}");
+                    break;
+                }
+            };
+
+            if html.contains("please show you&#39;re not a robot")
+                || html.contains("gs_captcha_ccl")
+                || html.contains("recaptcha")
+            {
+                warn!("Google Scholar CAPTCHA detected — stopping");
+                self.reachable.store(2, Ordering::Relaxed);
+                break;
+            }
+
+            let page_results = parse_scholar_html(&html);
+            if page_results.is_empty() {
+                break;
+            }
+
+            let took = page_results.len();
+            results.extend(page_results.into_iter().take(limit - results.len()));
+
+            if took < page_size {
+                break;
+            }
+            start += page_size;
+        }
+
+        debug!(
+            "Scholar: {} citations for scholar_id={:?}",
+            results.len(),
+            scholar_id
+        );
+        results
+    }
+
+    /// Search for authors on Google Scholar.
+    ///
+    /// Returns up to 5 author records (same cap as the Python implementation).
+    /// Each record contains `name`, `affiliation`, `scholar_id`, `citedby`, and
+    /// `interests`.
+    pub async fn search_author(&self, name: &str) -> Vec<AuthorRecord> {
+        if !self.check_reachable().await {
+            return Vec::new();
+        }
+
+        self.rate_limit().await;
+
+        let q_enc: String = url::form_urlencoded::byte_serialize(name.as_bytes()).collect();
+        let url = format!("https://scholar.google.com/scholar?q=author:{q_enc}&hl=en");
+
+        let ua = self.next_user_agent();
+        debug!("Scholar author search GET {url}");
+
+        let resp = match self.client.get(&url).header("User-Agent", ua).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Scholar author search request failed: {e}");
+                self.reachable.store(2, Ordering::Relaxed);
+                return Vec::new();
+            }
+        };
+
+        if !resp.status().is_success() {
+            warn!("Scholar author search returned HTTP {}", resp.status());
+            return Vec::new();
+        }
+
+        let html = match resp.text().await {
+            Ok(h) => h,
+            Err(e) => {
+                warn!("Scholar author search body read failed: {e}");
+                return Vec::new();
+            }
+        };
+
+        if html.contains("please show you&#39;re not a robot")
+            || html.contains("gs_captcha_ccl")
+            || html.contains("recaptcha")
+        {
+            warn!("Google Scholar CAPTCHA detected — stopping");
+            self.reachable.store(2, Ordering::Relaxed);
+            return Vec::new();
+        }
+
+        parse_author_html(&html)
     }
 
     // ------------------------------------------------------------------
@@ -396,6 +545,91 @@ fn parse_meta_line(meta: &str) -> (Vec<String>, u32, String) {
     let (year, venue) = parts.get(1).map(|s| parse_venue_year(s)).unwrap_or((0, String::new()));
 
     (authors, year, venue)
+}
+
+/// Parse Google Scholar author search HTML into up to 5 [`AuthorRecord`]s.
+///
+/// Scholar renders author cards as `<div class="gs_ai gs_scl gs_afr">` elements.
+fn parse_author_html(html: &str) -> Vec<AuthorRecord> {
+    let document = Html::parse_document(html);
+    let mut results = Vec::new();
+
+    let card_sel = match Selector::parse("div.gs_ai.gs_scl") {
+        Ok(s) => s,
+        Err(_) => return results,
+    };
+    let name_sel = Selector::parse("h3.gs_ai_name a").ok();
+    let affil_sel = Selector::parse("div.gs_ai_aff").ok();
+    let cited_sel = Selector::parse("div.gs_ai_cby").ok();
+    let interests_sel = Selector::parse("div.gs_ai_int a").ok();
+
+    for card in document.select(&card_sel) {
+        if results.len() >= 5 {
+            break;
+        }
+
+        let (name, scholar_id) = if let Some(sel) = &name_sel {
+            let link = card.select(sel).next();
+            let name = link
+                .map(|el| el.text().collect::<String>().trim().to_owned())
+                .unwrap_or_default();
+            // href="/citations?user=XXXXX&hl=en"
+            let scholar_id = link
+                .and_then(|el| el.value().attr("href"))
+                .and_then(|href| {
+                    href.split("user=")
+                        .nth(1)
+                        .map(|s| s.split('&').next().unwrap_or(s).to_owned())
+                })
+                .unwrap_or_default();
+            (name, scholar_id)
+        } else {
+            (String::new(), String::new())
+        };
+
+        if name.is_empty() {
+            continue;
+        }
+
+        let affiliation = affil_sel
+            .as_ref()
+            .and_then(|s| card.select(s).next())
+            .map(|el| el.text().collect::<String>().trim().to_owned())
+            .unwrap_or_default();
+
+        let citedby = cited_sel
+            .as_ref()
+            .and_then(|s| card.select(s).next())
+            .map(|el| el.text().collect::<String>())
+            .and_then(|t| {
+                // "Cited by 12345"
+                t.replace("Cited by", "")
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+            })
+            .unwrap_or(0);
+
+        let interests = interests_sel
+            .as_ref()
+            .map(|s| {
+                card.select(s)
+                    .map(|el| el.text().collect::<String>().trim().to_owned())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        results.push(AuthorRecord {
+            name,
+            affiliation,
+            scholar_id,
+            citedby,
+            interests,
+        });
+    }
+
+    results
 }
 
 /// Extract year and venue from "Venue Name, 2023" strings.
