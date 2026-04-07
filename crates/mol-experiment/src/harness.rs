@@ -13,7 +13,7 @@ use std::time::Instant;
 static DEFAULT_HARNESS: OnceLock<std::sync::Mutex<ExperimentHarness>> = OnceLock::new();
 
 /// Experiment harness for time budget management, metric collection, and
-/// result serialization.  Ported from the Python `ExperimentHarness` class.
+/// result serialization.
 pub struct ExperimentHarness {
     start: Instant,
     time_budget: u64,

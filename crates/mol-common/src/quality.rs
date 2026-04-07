@@ -2,8 +2,6 @@
 //!
 //! Detects placeholder/template content in LLM-generated text and provides
 //! quality metrics for pipeline outputs.
-//!
-//! Ported from Python `mol/quality.py`.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};

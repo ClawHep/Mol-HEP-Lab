@@ -1,8 +1,8 @@
 //! Tool dispatch and execution.
 //!
-//! Ported from `claw_engine/tools/executor.py`. Each of the six tools is
-//! implemented as an async method. All file operations are sandboxed to the
-//! workspace root (enforced by [`PermissionPolicy`]).
+//! Each of the six tools is implemented as an async method. All file
+//! operations are sandboxed to the workspace root (enforced by
+//! [`PermissionPolicy`]).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};

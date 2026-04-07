@@ -1,7 +1,6 @@
 //! Generic agentic LLM tool-use turn loop.
 //!
-//! Ported from `claw_engine/turn_loop.py`. The loop:
-//!   user_message → (LLM call → tool execution →)* → done
+//! The loop: user_message → (LLM call → tool execution →)* → done
 //!
 //! Stage-specific behaviour (verification gates, custom prompts) is injected
 //! via the `verification_hooks` field. Hooks are one-shot: they fire once and

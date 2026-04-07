@@ -13,13 +13,27 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use std::sync::LazyLock;
+
 use anyhow::Result;
-use md5::{Digest, Md5};
+use super::common::{copy_dir_filtered, md5_hex};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::process::Command;
 use tracing::{info, warn};
+
+// ---------------------------------------------------------------------------
+// Pre-compiled regexes (LazyLock — compiled once on first use)
+// ---------------------------------------------------------------------------
+
+static RE_CONDITION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:condition|ablation|variant|experiment)\s*[-_:]?\s*\d+").unwrap()
+});
+
+static RE_URL_HOST: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"https?://([^.]+)").unwrap()
+});
 
 // ---------------------------------------------------------------------------
 // Keyword constants
@@ -119,10 +133,9 @@ pub struct ComplexityScore {
     pub reason: String,
 }
 
-/// Count how many keywords from the slice appear (case-insensitive) in `text`.
-fn count_keyword_hits(text: &str, keywords: &[&str]) -> usize {
-    let lower = text.to_lowercase();
-    keywords.iter().filter(|&&kw| lower.contains(kw)).count()
+/// Count how many keywords from the slice appear in pre-lowercased `text`.
+fn count_keyword_hits(lower_text: &str, keywords: &[&str]) -> usize {
+    keywords.iter().filter(|&&kw| lower_text.contains(kw)).count()
 }
 
 /// Score the complexity of an experiment to determine if beast mode is warranted.
@@ -144,35 +157,32 @@ pub fn score_complexity(
     }
 
     let combined = format!("{topic}\n{exp_plan}");
+    let combined_lower = combined.to_lowercase();
 
     // Signal 1: Component count (weight 0.25)
-    let comp_hits = count_keyword_hits(&combined, COMPONENT_KEYWORDS);
+    let comp_hits = count_keyword_hits(&combined_lower, COMPONENT_KEYWORDS);
     let component_score = (comp_hits as f64 / 5.0_f64).min(1.0);
 
     // Signal 2: File count hint (weight 0.20)
-    let file_hits = count_keyword_hits(&combined, FILE_HINT_KEYWORDS);
+    let file_hits = count_keyword_hits(&combined_lower, FILE_HINT_KEYWORDS);
     let file_score = (file_hits as f64 / 3.0_f64).min(1.0);
 
     // Signal 3: Domain complexity (weight 0.20)
-    let domain_hits = count_keyword_hits(&combined, DOMAIN_COMPLEX_KEYWORDS);
+    let domain_hits = count_keyword_hits(&combined_lower, DOMAIN_COMPLEX_KEYWORDS);
     let domain_score = (domain_hits as f64 / 3.0_f64).min(1.0);
 
     // Signal 4: Condition count (weight 0.15)
     // Look for numbered conditions, ablation mentions, variant mentions
-    let condition_re = Regex::new(
-        r"(?i)(?:condition|ablation|variant|experiment)\s*[-_:]?\s*\d+",
-    )
-    .expect("static regex is valid");
-    let mut condition_matches = condition_re.find_iter(&combined).count();
+    let mut condition_matches = RE_CONDITION.find_iter(&combined).count();
     // Also count "baseline" occurrences
-    condition_matches += combined.to_lowercase().matches("baseline").count();
+    condition_matches += combined_lower.matches("baseline").count();
     let condition_score = (condition_matches as f64 / 8.0_f64).min(1.0);
 
     // Signal 5: Historical failures (weight 0.10)
     let failure_score = (historical_failures as f64 / 3.0_f64).min(1.0);
 
     // Signal 6: Dependency depth (weight 0.10)
-    let dep_hits = count_keyword_hits(&combined, DEPENDENCY_KEYWORDS);
+    let dep_hits = count_keyword_hits(&combined_lower, DEPENDENCY_KEYWORDS);
     let dep_score = (dep_hits as f64 / 3.0_f64).min(1.0);
 
     // Weighted sum
@@ -372,8 +382,7 @@ impl OpenCodeBridge {
             //   https://myresource-eastus2.services.ai.azure.com/openai/v1
             //   https://myresource.openai.azure.com/openai
             let resource_name = if !self.llm_base_url.is_empty() {
-                let re = Regex::new(r"https?://([^.]+)").expect("static regex is valid");
-                re.captures(&self.llm_base_url)
+                RE_URL_HOST.captures(&self.llm_base_url)
                     .and_then(|c| c.get(1))
                     .map(|m| m.as_str().to_string())
                     .unwrap_or_default()
@@ -604,7 +613,7 @@ impl OpenCodeBridge {
                     if repo.is_dir() {
                         let name = repo.file_name().unwrap_or_default().to_string_lossy();
                         if !name.starts_with('.') {
-                            copy_dir_into(&repo, &ws)?;
+                            copy_dir_filtered(&repo, &ws)?;
                         }
                     }
                 }
@@ -1155,13 +1164,6 @@ pub fn count_historical_failures(run_dir: &Path, stage_name: &str) -> usize {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/// Compute the MD5 hex digest of `bytes`.
-fn md5_hex(bytes: &[u8]) -> String {
-    let mut hasher = Md5::new();
-    hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
-}
-
 /// Simple glob match: `pattern` may contain `*` wildcards (prefix match: `name*`).
 fn glob_matches(name: &str, pattern: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix('*') {
@@ -1169,42 +1171,6 @@ fn glob_matches(name: &str, pattern: &str) -> bool {
     } else {
         name == pattern
     }
-}
-
-/// Copy all contents of `src` directory into `dst`, skipping common noise.
-fn copy_dir_into(src: &Path, dst: &Path) -> std::io::Result<()> {
-    const SKIP: &[&str] = &[
-        ".git",
-        "__pycache__",
-        "node_modules",
-        ".eggs",
-        "_manifest.json",
-    ];
-
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let name = entry.file_name();
-        let name_str = name.to_string_lossy();
-
-        // Skip noise
-        if SKIP.iter().any(|&s| name_str == s) {
-            continue;
-        }
-        if name_str.ends_with(".pyc") {
-            continue;
-        }
-
-        let src_path = entry.path();
-        let dst_path = dst.join(&name);
-
-        if src_path.is_dir() {
-            std::fs::create_dir_all(&dst_path)?;
-            copy_dir_into(&src_path, &dst_path)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -1281,8 +1247,9 @@ mod tests {
 
     #[test]
     fn test_count_keyword_hits_case_insensitive() {
-        assert_eq!(count_keyword_hits("ENCODER Decoder", COMPONENT_KEYWORDS), 2);
-        assert_eq!(count_keyword_hits("nothing here", COMPONENT_KEYWORDS), 0);
+        // count_keyword_hits expects pre-lowered text (caller lowercases once)
+        assert_eq!(count_keyword_hits(&"ENCODER Decoder".to_lowercase(), COMPONENT_KEYWORDS), 2);
+        assert_eq!(count_keyword_hits(&"nothing here".to_lowercase(), COMPONENT_KEYWORDS), 0);
     }
 
     #[test]

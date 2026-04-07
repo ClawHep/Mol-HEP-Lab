@@ -1,7 +1,5 @@
 //! Multi-phase code generation agent.
 //!
-//! Ported from `backend/agent/researchclaw/pipeline/code_agent.py` (1 397 lines).
-//!
 //! # Phases
 //! 1. **Blueprint Planning** — LLM produces a YAML blueprint with per-file
 //!    pseudocode and dependency ordering.
@@ -19,6 +17,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Instant;
 
 use anyhow::{Context as _, Result};
@@ -27,6 +26,100 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, info};
+
+// ---------------------------------------------------------------------------
+// Pre-compiled regexes (LazyLock — compiled once on first use)
+// ---------------------------------------------------------------------------
+
+/// YAML fenced code block: ```yaml ... ``` or ```yml ... ```
+static RE_YAML_FENCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)```ya?ml\s*\n(.*?)```").unwrap());
+
+/// Python fenced code block: ```python ... ```
+static RE_PYTHON_FENCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)```python\s*\n(.*?)```").unwrap());
+
+/// Top-level class definition: `class Foo(Bar):`
+static RE_CLASS_DEF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^class\s+(\w+)(?:\(([^)]*)\))?:").unwrap());
+
+/// Top-level function definition: `def foo(args):`
+static RE_FUNC_DEF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^def\s+(\w+)\s*\(([^)]*)\):").unwrap());
+
+/// Method definition (4-space indented): `    def foo(args):`
+static RE_METHOD_DEF: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^    def\s+(\w+)\s*\(([^)]*)\):").unwrap());
+
+/// Import statement (bare `import` or `from … import`)
+static RE_IMPORT_LINE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^(?:import\s+\S+|from\s+\S+\s+import\s+.+)").unwrap());
+
+/// Hardcoded metric literal: `accuracy = 0.95`
+static RE_HARDCODED_METRIC: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?m)(accuracy|loss|fid|score|metric)\s*=\s*0\.\d+"#).unwrap());
+
+/// `nn.Module` layer instantiated inside `forward()`
+static RE_FORWARD_LAYER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?s)def forward\s*\([^)]*\):[^\n]*\n(?:(?:[ \t]+[^\n]*\n)*?[ \t]+(?:nn\.|torch\.nn\.))",
+    )
+    .unwrap()
+});
+
+/// `from foo import bar` statement
+static RE_FROM_IMPORT: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^from\s+([\w.]+)\s+import\s+(.+)$").unwrap());
+
+/// Python `NameError: name 'x' is not defined` message
+static RE_NAME_ERROR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"name\s+'(\w+)'\s+is\s+not\s+defined").unwrap());
+
+/// Undefined / wrong-language name literals
+static RE_UNDEFINED_NAME: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(undefined|NULL|TRUE|FALSE|NONE|Null|False\b|True\b|None\b)").unwrap()
+});
+
+/// Augmented assignment at indented scope: `    x +=`
+static RE_AUGMENTED_ASSIGN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^([ \t]+)(\w+)\s*\+=").unwrap());
+
+/// Empty stub class body: `class Foo(Bar):\n    pass`
+static RE_EMPTY_CLASS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^class\s+(\w+)\([^)]+\):\s*\n\s+pass\s*$").unwrap());
+
+/// Top-level class name only: `class Foo`
+static RE_CLASS_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^class\s+(\w+)").unwrap());
+
+/// Top-level function name only: `def foo`
+static RE_FUNC_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^def\s+(\w+)").unwrap());
+
+/// Top-level assignment: `foo =`
+static RE_TOP_ASSIGN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^(\w+)\s*=").unwrap());
+
+/// Python traceback file reference: `File "path/to/foo.py", line N`
+static RE_TRACEBACK_FILE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"File "(?:[^"]*[/\\])?([^"]+\.py)", line (\d+)"#).unwrap());
+
+/// Fenced code block (python or filename-tagged): ` ```python` or ` ```filename:foo`
+static RE_CODE_FENCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)```(?:python|filename:\S+)\s*\n(.*?)```").unwrap());
+
+/// Named fenced block: ` ```filename:foo.py`
+static RE_NAMED_FENCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)```filename:(\S+)\s*\n(.*?)```").unwrap());
+
+/// JSON fenced code block: ` ```json`
+static RE_JSON_FENCE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)```json\s*\n(.*?)```").unwrap());
+
+/// Inline JSON object (up to 2 levels of nesting)
+static RE_JSON_BRACE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}").unwrap()
+});
 
 // ---------------------------------------------------------------------------
 // LLM / Sandbox traits
@@ -89,9 +182,6 @@ pub trait SandboxLike: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// Configuration for the multi-phase code generation agent.
-///
-/// Mirrors the Python `CodeAgentConfig` frozen dataclass.  All phase toggles
-/// default to the same values as the Python original.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeAgentConfig {
     pub enabled: bool,
@@ -144,8 +234,6 @@ impl Default for CodeAgentConfig {
 // ---------------------------------------------------------------------------
 
 /// One candidate solution in the tree search.
-///
-/// Mirrors Python `SolutionNode`.
 #[derive(Debug, Clone, Default)]
 pub struct SolutionNode {
     pub node_id: String,
@@ -179,8 +267,6 @@ impl SolutionNode {
 // ---------------------------------------------------------------------------
 
 /// Final output from the code generation agent.
-///
-/// Mirrors Python `CodeAgentResult`.
 #[derive(Debug, Clone, Default)]
 pub struct CodeAgentResult {
     pub files: HashMap<String, String>,
@@ -249,8 +335,8 @@ pub struct Blueprint {
 
 /// Multi-phase code generation agent.
 ///
-/// Mirrors the Python `CodeAgent` class.  The LLM client and sandbox are
-/// supplied as trait objects so the struct is easily testable.
+/// The LLM client and sandbox are supplied as trait objects so the struct is
+/// easily testable.
 pub struct CodeAgent {
     llm: Box<dyn LlmClient>,
     config: CodeAgentConfig,
@@ -470,8 +556,7 @@ impl CodeAgent {
         let mut arch_spec = resp.content.clone();
 
         // Extract YAML block
-        let yaml_re = Regex::new(r"(?s)```ya?ml\s*\n(.*?)```").unwrap();
-        if let Some(cap) = yaml_re.captures(&arch_spec) {
+        if let Some(cap) = RE_YAML_FENCE.captures(&arch_spec) {
             arch_spec = cap[1].trim().to_owned();
         }
 
@@ -641,12 +726,9 @@ impl CodeAgent {
     }
 
     /// Extract Python source from a single-file LLM response.
-    ///
-    /// Mirrors `_extract_single_file_code` in the Python original.
     pub fn extract_single_file_code(content: &str, expected_name: &str) -> String {
         // Try ```python ... ``` block
-        let py_re = Regex::new(r"(?s)```python\s*\n(.*?)```").unwrap();
-        if let Some(cap) = py_re.captures(content) {
+        if let Some(cap) = RE_PYTHON_FENCE.captures(content) {
             return cap[1].trim().to_owned();
         }
         // Try ```filename:expected_name ... ``` block
@@ -682,14 +764,13 @@ impl CodeAgent {
         };
 
         // Classes
-        let class_re = Regex::new(r"(?m)^class\s+(\w+)(?:\(([^)]*)\))?:").unwrap();
+        let class_re = &*RE_CLASS_DEF;
         // Top-level functions (no leading spaces)
-        let func_re = Regex::new(r"(?m)^def\s+(\w+)\s*\(([^)]*)\):").unwrap();
+        let func_re = &*RE_FUNC_DEF;
         // Method definitions (4-space or tab indent)
-        let method_re = Regex::new(r"(?m)^    def\s+(\w+)\s*\(([^)]*)\):").unwrap();
+        let method_re = &*RE_METHOD_DEF;
         // Import lines
-        let import_re =
-            Regex::new(r"(?m)^(?:import\s+\S+|from\s+\S+\s+import\s+.+)").unwrap();
+        let import_re = &*RE_IMPORT_LINE;
 
         // Collect class blocks — from `class X:` to the next `^class` or EOF,
         // so that method search is scoped to each class's own body.
@@ -833,8 +914,7 @@ impl CodeAgent {
         }
 
         // 2. Hardcoded metrics — CRITICAL
-        let hardcoded_re =
-            Regex::new(r#"(?m)(accuracy|loss|fid|score|metric)\s*=\s*0\.\d+"#).unwrap();
+        let hardcoded_re = &*RE_HARDCODED_METRIC;
         for (fname, code) in files {
             if !fname.ends_with(".py") {
                 continue;
@@ -848,10 +928,7 @@ impl CodeAgent {
         }
 
         // 3. nn.Module layers created in forward() — CRITICAL
-        let forward_layer_re = Regex::new(
-            r"(?s)def forward\s*\([^)]*\):[^\n]*\n(?:(?:[ \t]+[^\n]*\n)*?[ \t]+(?:nn\.|torch\.nn\.))",
-        )
-        .unwrap();
+        let forward_layer_re = &*RE_FORWARD_LAYER;
         for (fname, code) in files {
             if !fname.ends_with(".py") {
                 continue;
@@ -870,8 +947,7 @@ impl CodeAgent {
             .map(|f| f.trim_end_matches(".py").to_owned())
             .collect();
 
-        let from_import_re =
-            Regex::new(r"(?m)^from\s+([\w.]+)\s+import\s+(.+)$").unwrap();
+        let from_import_re = &*RE_FROM_IMPORT;
         for (fname, code) in files {
             if !fname.ends_with(".py") {
                 continue;
@@ -904,12 +980,10 @@ impl CodeAgent {
         //    Also flag calls to bare names that look like undefined globals: any
         //    `name(` or `name.` usage where `name` is one of a set of commonly
         //    confused builtins/stdlib items that differ between Python versions.
-        let name_error_literal_re =
-            Regex::new(r"name\s+'(\w+)'\s+is\s+not\s+defined").unwrap();
+        let name_error_literal_re = &*RE_NAME_ERROR;
         // Heuristic: referencing `undefined` (JS habit), `NULL` (SQL/C habit),
         // or `True`/`False`/`None` spelled incorrectly.
-        let undefined_name_re =
-            Regex::new(r"\b(undefined|NULL|TRUE|FALSE|NONE|Null|False\b|True\b|None\b)").unwrap();
+        let undefined_name_re = &*RE_UNDEFINED_NAME;
         for (fname, code) in files.iter() {
             if !fname.ends_with(".py") {
                 continue;
@@ -940,8 +1014,7 @@ impl CodeAgent {
         //    We cannot use negative lookahead (not supported by the `regex`
         //    crate), so we use a string scan on the slice of code before the
         //    augmented assignment.
-        let augmented_assign_re =
-            Regex::new(r"(?m)^([ \t]+)(\w+)\s*\+=").unwrap();
+        let augmented_assign_re = &*RE_AUGMENTED_ASSIGN;
         for (fname, code) in files.iter() {
             if !fname.ends_with(".py") {
                 continue;
@@ -972,7 +1045,7 @@ impl CodeAgent {
 
         // 5. Empty ablation / variant classes — WARNING (promote to CRITICAL
         //    when the body is just `pass`)
-        let empty_class_re = Regex::new(r"(?m)^class\s+(\w+)\([^)]+\):\s*\n\s+pass\s*$").unwrap();
+        let empty_class_re = &*RE_EMPTY_CLASS;
         for (fname, code) in files {
             if !fname.ends_with(".py") {
                 continue;
@@ -1007,9 +1080,9 @@ impl CodeAgent {
     /// function defs, and top-level assignments).
     fn extract_exported_names(code: &str) -> HashSet<String> {
         let mut names = HashSet::new();
-        let class_re = Regex::new(r"(?m)^class\s+(\w+)").unwrap();
-        let func_re = Regex::new(r"(?m)^def\s+(\w+)").unwrap();
-        let assign_re = Regex::new(r"(?m)^(\w+)\s*=").unwrap();
+        let class_re = &*RE_CLASS_NAME;
+        let func_re = &*RE_FUNC_NAME;
+        let assign_re = &*RE_TOP_ASSIGN;
         for cap in class_re.captures_iter(code) {
             names.insert(cap[1].to_owned());
         }
@@ -1236,8 +1309,7 @@ impl CodeAgent {
         files: &HashMap<String, String>,
     ) -> Option<(String, usize, String)> {
         let known_files: HashSet<&str> = files.keys().map(String::as_str).collect();
-        let tb_re = Regex::new(r#"File "(?:[^"]*[/\\])?([^"]+\.py)", line (\d+)"#).unwrap();
-        let matches: Vec<_> = tb_re.captures_iter(stderr).collect();
+        let matches: Vec<_> = RE_TRACEBACK_FILE.captures_iter(stderr).collect();
         if matches.is_empty() {
             return None;
         }
@@ -1321,9 +1393,7 @@ impl CodeAgent {
         let mut fixed = Self::extract_files(&resp.content);
         if fixed.is_empty() {
             // Try single-file extraction
-            let single_re =
-                Regex::new(r"(?s)```(?:python|filename:\S+)\s*\n(.*?)```").unwrap();
-            if let Some(cap) = single_re.captures(&resp.content) {
+            if let Some(cap) = RE_CODE_FENCE.captures(&resp.content) {
                 fixed.insert(target_file.to_owned(), cap[1].trim().to_owned());
             }
         }
@@ -1451,8 +1521,6 @@ impl CodeAgent {
     }
 
     /// Score a solution node based on execution results.
-    ///
-    /// Mirrors Python `_score_node`.
     pub fn score_node(node: &SolutionNode, metric_key: &str) -> f64 {
         let mut score = 0.0f64;
         if node.runs_ok {
@@ -1625,9 +1693,7 @@ impl CodeAgent {
         let mut files = HashMap::new();
 
         // Named blocks: ```filename:xxx.py
-        let named_re =
-            Regex::new(r"(?s)```filename:(\S+)\s*\n(.*?)```").unwrap();
-        for cap in named_re.captures_iter(content) {
+        for cap in RE_NAMED_FENCE.captures_iter(content) {
             let name = cap[1].trim().to_owned();
             let code = cap[2].trim().to_owned();
             if !name.is_empty() && !code.is_empty() {
@@ -1637,8 +1703,7 @@ impl CodeAgent {
 
         // Plain python block → main.py if no main.py yet
         if !files.contains_key("main.py") {
-            let py_re = Regex::new(r"(?s)```python\s*\n(.*?)```").unwrap();
-            if let Some(cap) = py_re.captures(content) {
+            if let Some(cap) = RE_PYTHON_FENCE.captures(content) {
                 let code = cap[1].trim().to_owned();
                 if !code.is_empty() {
                     files.insert("main.py".to_owned(), code);
@@ -1661,26 +1726,20 @@ impl CodeAgent {
 
     /// Best-effort JSON extraction from LLM text.
     ///
-    /// Mirrors `_parse_json` in the Python original (BUG-17 fix: always returns
-    /// `Option<Map>`, never a bare string or array).
+    /// BUG-17 fix: always returns `Option<Map>`, never a bare string or array.
     pub fn parse_json(text: &str) -> Option<serde_json::Map<String, Value>> {
         // Direct parse
         if let Ok(Value::Object(m)) = serde_json::from_str(text) {
             return Some(m);
         }
         // ```json ... ``` block
-        let fence_re = Regex::new(r"(?s)```json\s*\n(.*?)```").unwrap();
-        if let Some(cap) = fence_re.captures(text) {
+        if let Some(cap) = RE_JSON_FENCE.captures(text) {
             if let Ok(Value::Object(m)) = serde_json::from_str(&cap[1]) {
                 return Some(m);
             }
         }
         // First `{...}` object (up to 2 levels of nesting)
-        let brace_re = Regex::new(
-            r"\{[^{}]*(?:\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}[^{}]*)*\}",
-        )
-        .unwrap();
-        if let Some(cap) = brace_re.find(text) {
+        if let Some(cap) = RE_JSON_BRACE.find(text) {
             if let Ok(Value::Object(m)) = serde_json::from_str(cap.as_str()) {
                 return Some(m);
             }

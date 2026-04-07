@@ -1,7 +1,6 @@
 //! Static knowledge base of conference writing tips.
 //!
-//! Ported from the Python `writing_guide.py` module. Provides
-//! [`CONFERENCE_WRITING_TIPS`] (a category -> tips mapping) and
+//! Provides [`CONFERENCE_WRITING_TIPS`] (a category -> tips mapping) and
 //! [`format_writing_tips`] for rendering a Markdown summary.
 
 use std::collections::HashMap;

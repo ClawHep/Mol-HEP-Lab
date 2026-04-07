@@ -1,8 +1,8 @@
 //! Tool specifications for the mol-engine agentic turn loop.
 //!
-//! Ported from `claw_engine/tools/definitions.py`. Each tool has a name,
-//! description, and JSON-Schema `input_schema` that is passed to the LLM
-//! via the API `tools` field — NOT embedded in the system prompt.
+//! Each tool has a name, description, and JSON-Schema `input_schema` that is
+//! passed to the LLM via the API `tools` field — NOT embedded in the system
+//! prompt.
 
 use serde_json::{Value, json};
 

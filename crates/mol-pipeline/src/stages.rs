@@ -1,6 +1,5 @@
 //! 26-stage Mol-HEP-Lab pipeline state machine.
 //!
-//! Faithfully ported from `backend/agent/mol/pipeline/stages.py`.
 //! Defines the stage sequence, status transitions, gate logic, and rollback
 //! rules for the complete research pipeline.
 
@@ -410,9 +409,8 @@ pub fn decision_rollback(decision: &str) -> Option<Stage> {
 
 /// Return `true` if `stage` is a gate stage requiring human approval.
 ///
-/// Mirrors Python `gate_required()`.  The optional `hitl_required_stages`
-/// slice allows callers to restrict which gate stages actually block; when
-/// `None` all gate stages return `true`.
+/// The optional `hitl_required_stages` slice allows callers to restrict which
+/// gate stages actually block; when `None` all gate stages return `true`.
 pub fn gate_required(stage: Stage, hitl_required_stages: Option<&[i32]>) -> bool {
     if !GATE_STAGES.contains(&stage) {
         return false;
@@ -425,8 +423,6 @@ pub fn gate_required(stage: Stage, hitl_required_stages: Option<&[i32]>) -> bool
 
 /// Return the configured rollback target for `stage`, falling back to the
 /// previous stage in the sequence, then `stage` itself.
-///
-/// Mirrors Python `default_rollback_stage()`.
 pub fn default_rollback_stage(stage: Stage) -> Stage {
     gate_rollback(stage)
         .or_else(|| previous_stage(stage))

@@ -1,6 +1,5 @@
 //! Base agent trait and shared orchestration types.
 //!
-//! Mirrors `backend/agent/mol/agents/base.py`:
 //! - [`BaseAgent`] — async trait every sub-agent implements.
 //! - [`AgentOrchestrator`] — coordinator base for multi-agent workflows.
 //! - Supporting structs: [`AgentContext`], [`AgentPlan`], [`AgentStepResult`],

@@ -1,9 +1,8 @@
 //! Sandbox permission policy for tool execution.
 //!
-//! Ported from `claw_engine/tools/permissions.py`.  All file operations are
-//! sandboxed: write operations are confined to the workspace, read operations
-//! are allowed in the workspace plus any explicitly configured directories.
-//! Only dangerous bash commands are blocked.
+//! All file operations are sandboxed: write operations are confined to the
+//! workspace, read operations are allowed in the workspace plus any explicitly
+//! configured directories.  Only dangerous bash commands are blocked.
 
 use std::path::{Path, PathBuf};
 

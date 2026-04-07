@@ -50,7 +50,6 @@ impl std::fmt::Display for MetricValue {
 
 /// Parse `metric: value` or `condition=X metric: value` lines from stdout.
 ///
-/// Mirrors the Python `parse_metrics` function in `sandbox.py`.
 /// Skips NaN / Inf values — they indicate training divergence.
 pub fn parse_metrics_from_stdout(stdout: &str) -> HashMap<String, MetricValue> {
     let mut metrics: HashMap<String, MetricValue> = HashMap::new();

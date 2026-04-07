@@ -1,7 +1,7 @@
 //! Session state for a single agentic stage execution.
 //!
-//! Ported from `claw_engine/session.py`. Provides timestamped logging,
-//! artifact tracking, and auto-persist to JSON for live debugging.
+//! Provides timestamped logging, artifact tracking, and auto-persist to JSON
+//! for live debugging.
 
 use std::path::PathBuf;
 use std::time::Instant;

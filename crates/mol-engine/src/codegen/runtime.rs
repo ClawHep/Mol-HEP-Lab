@@ -1,7 +1,6 @@
 //! Codegen orchestration runtime.
 //!
-//! Ported from `pipeline/codegen/runtime.py`. Orchestrates the multi-phase
-//! code generation pipeline:
+//! Orchestrates the multi-phase code generation pipeline:
 //!
 //! 1. CONTEXT    — Assemble CodegenContext from paths and discovered data
 //! 2. LLM_SETUP  — Resolve LLM configuration

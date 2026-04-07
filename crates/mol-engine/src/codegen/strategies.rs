@@ -1,8 +1,5 @@
 //! Codegen strategy trait and built-in implementations.
 //!
-//! Ported from `pipeline/codegen/strategies/claw_agent.py` and
-//! `pipeline/codegen/strategies/fallback.py`.
-//!
 //! Strategies are selected by the [`super::runtime::CodegenRuntime`] based on
 //! the [`super::types::CodegenContext`]. The `MolAgentStrategy` is the primary
 //! path; `FallbackStrategy` produces a minimal numpy stub when the agent fails.

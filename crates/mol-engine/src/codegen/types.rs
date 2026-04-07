@@ -1,7 +1,7 @@
 //! Core types for the mol-engine codegen subsystem.
 //!
-//! Ported from `pipeline/codegen/types.py`. Provides phase enumeration,
-//! context structures, and result types used by all codegen strategies.
+//! Provides phase enumeration, context structures, and result types used by
+//! all codegen strategies.
 
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use anyhow::Result;
-use md5::{Digest, Md5};
+use super::common::md5_hex;
 use regex::Regex;
 use serde_json::Value;
 use tokio::process::Command;
@@ -206,7 +206,7 @@ impl OpenHandsBridge {
             if let Some(parent) = exe.parent() {
                 let candidate = parent.join("aider");
                 if candidate.is_file() {
-                    return candidate.to_string_lossy().to_string();
+                    return candidate.to_string_lossy().into_owned();
                 }
             }
         }
@@ -215,7 +215,7 @@ impl OpenHandsBridge {
         if let Some(home) = std::env::var_os("HOME") {
             let candidate = PathBuf::from(home).join(".local").join("bin").join("aider");
             if candidate.is_file() {
-                return candidate.to_string_lossy().to_string();
+                return candidate.to_string_lossy().into_owned();
             }
         }
 
@@ -313,7 +313,7 @@ impl OpenHandsBridge {
                 let codebases_ws = ws.join("codebases");
                 tokio::fs::create_dir_all(&codebases_ws).await?;
                 let dest = codebases_ws.join(cb_path.file_name().unwrap_or_default());
-                copy_dir_ignore(&cb_path, &dest)?;
+                super::common::copy_dir_filtered(&cb_path, &dest)?;
             }
         }
 
@@ -435,7 +435,7 @@ impl OpenHandsBridge {
                         let mut names: Vec<String> = entries
                             .filter_map(|e| e.ok())
                             .filter(|e| e.path().is_dir())
-                            .map(|e| e.file_name().to_string_lossy().to_string())
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
                             .collect();
                         names.sort();
                         repo_names = names;
@@ -495,7 +495,7 @@ impl OpenHandsBridge {
                                     break;
                                 }
                                 let rel = ex_file.strip_prefix(&codebases_ws)
-                                    .map(|r| r.to_string_lossy().to_string())
+                                    .map(|r| r.to_string_lossy().into_owned())
                                     .unwrap_or_default();
                                 if seen_examples.contains(&rel) {
                                     continue;
@@ -702,18 +702,16 @@ impl OpenHandsBridge {
             if parts.iter().any(|p| p.starts_with("__pycache__") || p.starts_with('.') || *p == "codebases") {
                 continue;
             }
-            let rel_str = rel.to_string_lossy().to_string();
+            let rel_str = rel.to_string_lossy().into_owned();
             if let Some(orig_hash) = original_hashes.get(&rel_str) {
                 if let Ok(bytes) = std::fs::read(py_file) {
-                    let mut hasher = Md5::new();
-                    hasher.update(&bytes);
-                    let current_hash = format!("{:x}", hasher.finalize());
+                    let current_hash = md5_hex(&bytes);
                     if &current_hash == orig_hash {
                         continue;
                     }
                 }
             }
-            let basename = rel.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let basename = rel.file_name().unwrap_or_default().to_string_lossy().into_owned();
             if !files.contains_key(&basename) {
                 match std::fs::read_to_string(py_file) {
                     Ok(content) => {
@@ -732,9 +730,7 @@ impl OpenHandsBridge {
             if p.exists() && !files.contains_key(extra) {
                 if let Some(orig_hash) = original_hashes.get(extra) {
                     if let Ok(bytes) = std::fs::read(&p) {
-                        let mut hasher = Md5::new();
-                        hasher.update(&bytes);
-                        let current_hash = format!("{:x}", hasher.finalize());
+                        let current_hash = md5_hex(&bytes);
                         if &current_hash == orig_hash {
                             continue;
                         }
@@ -799,7 +795,7 @@ impl OpenHandsBridge {
         candidates
             .into_iter()
             .take(max_files)
-            .map(|(_, p)| p.to_string_lossy().to_string())
+            .map(|(_, p)| p.to_string_lossy().into_owned())
             .collect()
     }
 
@@ -826,11 +822,11 @@ impl OpenHandsBridge {
         let mut add_files: Vec<String> = Vec::new();
         let main_py = workspace.join("main.py");
         if main_py.exists() {
-            add_files.push(main_py.to_string_lossy().to_string());
+            add_files.push(main_py.to_string_lossy().into_owned());
         }
         let guidance_path = workspace.join("GUIDANCE.md");
         if guidance_path.exists() {
-            add_files.push(guidance_path.to_string_lossy().to_string());
+            add_files.push(guidance_path.to_string_lossy().into_owned());
         }
 
         // Read-only context: EXPERIMENT_PLAN.yaml + core source files
@@ -838,7 +834,7 @@ impl OpenHandsBridge {
         let exp_plan_path = workspace.join("EXPERIMENT_PLAN.yaml");
         if exp_plan_path.exists() {
             read_files.push("--read".to_string());
-            read_files.push(exp_plan_path.to_string_lossy().to_string());
+            read_files.push(exp_plan_path.to_string_lossy().into_owned());
         }
         for rf in Self::find_core_source_files(workspace, 10, 150) {
             read_files.push("--read".to_string());
@@ -854,7 +850,7 @@ impl OpenHandsBridge {
             "--openai-api-key".to_string(),
             api_key.to_string(),
             "--message-file".to_string(),
-            msg_file.to_string_lossy().to_string(),
+            msg_file.to_string_lossy().into_owned(),
             "--yes".to_string(),
             "--no-auto-commits".to_string(),
             "--no-stream".to_string(),
@@ -901,7 +897,7 @@ impl OpenHandsBridge {
                 .collect();
             sorted_entries.sort_by_key(|e| e.file_name());
             for entry in sorted_entries {
-                add_files.push(entry.path().to_string_lossy().to_string());
+                add_files.push(entry.path().to_string_lossy().into_owned());
             }
         }
 
@@ -911,7 +907,7 @@ impl OpenHandsBridge {
             let ctx_path = workspace.join(ctx);
             if ctx_path.exists() {
                 read_files.push("--read".to_string());
-                read_files.push(ctx_path.to_string_lossy().to_string());
+                read_files.push(ctx_path.to_string_lossy().into_owned());
             }
         }
         for rf in Self::find_core_source_files(workspace, 10, 150) {
@@ -932,7 +928,7 @@ impl OpenHandsBridge {
                 yaml_files.sort();
                 for yf in yaml_files.into_iter().take(8) {
                     read_files.push("--read".to_string());
-                    read_files.push(yf.to_string_lossy().to_string());
+                    read_files.push(yf.to_string_lossy().into_owned());
                 }
             }
         }
@@ -946,7 +942,7 @@ impl OpenHandsBridge {
             "--openai-api-key".to_string(),
             api_key.to_string(),
             "--message-file".to_string(),
-            msg_file.to_string_lossy().to_string(),
+            msg_file.to_string_lossy().into_owned(),
             "--yes".to_string(),
             "--no-auto-commits".to_string(),
             "--no-stream".to_string(),
@@ -1626,7 +1622,7 @@ impl OpenHandsBridge {
                 if py_file.extension().and_then(|x| x.to_str()) != Some("py") {
                     continue;
                 }
-                let name = py_file.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let name = py_file.file_name().unwrap_or_default().to_string_lossy().into_owned();
                 let orig = experiment_dir.join(&name);
                 if !orig.exists() {
                     continue;
@@ -1696,49 +1692,6 @@ fn dir_tree(root: &Path, max_depth: usize, max_items: usize) -> Result<String> {
     Ok(lines.join("\n"))
 }
 
-/// Copy a directory tree, ignoring .git, __pycache__, *.pyc, node_modules, .eggs, _manifest.json.
-fn copy_dir_ignore(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst)?;
-    let ignore_names = [".git", "__pycache__", "node_modules", ".eggs"];
-    let ignore_exts = ["pyc"];
-    let ignore_files = ["_manifest.json"];
-
-    for entry in walkdir::WalkDir::new(src).min_depth(1).into_iter().filter_map(|e| e.ok()) {
-        let path = entry.path();
-        let rel = match path.strip_prefix(src) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        // Check each component
-        let skip = rel.components().any(|c| {
-            let s = c.as_os_str().to_str().unwrap_or("");
-            ignore_names.contains(&s)
-        });
-        if skip {
-            continue;
-        }
-        let name = path.file_name().unwrap_or_default().to_str().unwrap_or("");
-        if ignore_files.contains(&name) {
-            continue;
-        }
-        if let Some(ext) = path.extension().and_then(|x| x.to_str()) {
-            if ignore_exts.contains(&ext) {
-                continue;
-            }
-        }
-        let dest = dst.join(rel);
-        if path.is_dir() {
-            std::fs::create_dir_all(&dest)?;
-        } else if path.is_file() {
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            std::fs::copy(path, &dest)?;
-        }
-    }
-    Ok(())
-}
-
 /// Recursively collect MD5 hashes of .py files relative to workspace root.
 fn collect_py_hashes(root: &Path, base: &Path, out: &mut HashMap<String, String>) {
     let walker = walkdir::WalkDir::new(root);
@@ -1758,10 +1711,8 @@ fn collect_py_hashes(root: &Path, base: &Path, out: &mut HashMap<String, String>
             Ok(b) => b,
             Err(_) => continue,
         };
-        let mut hasher = Md5::new();
-        hasher.update(&bytes);
-        let hash = format!("{:x}", hasher.finalize());
-        out.insert(rel.to_string_lossy().to_string(), hash);
+        let hash = md5_hex(&bytes);
+        out.insert(rel.to_string_lossy().into_owned(), hash);
     }
 }
 
@@ -2242,9 +2193,7 @@ line7
         let ws = dir.path();
 
         let content = b"print('hello')\n";
-        let mut hasher = Md5::new();
-        hasher.update(content);
-        let hash = format!("{:x}", hasher.finalize());
+        let hash = crate::bridges::common::md5_hex(content);
 
         let mut snapshot = HashMap::new();
         snapshot.insert("main.py".to_string(), hash);
