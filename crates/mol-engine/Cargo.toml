@@ -16,6 +16,7 @@ tempfile = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
 glob = { workspace = true }
+serde_yaml = { workspace = true }
 mol-common = { workspace = true }
 mol-config = { workspace = true }
 mol-llm = { workspace = true }
