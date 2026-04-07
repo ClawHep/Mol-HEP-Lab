@@ -17,6 +17,8 @@ chrono = { workspace = true }
 reqwest = { workspace = true }
 glob = { workspace = true }
 serde_yaml = { workspace = true }
+md-5 = { workspace = true }
+walkdir = { workspace = true }
 mol-common = { workspace = true }
 mol-config = { workspace = true }
 mol-llm = { workspace = true }

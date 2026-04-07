@@ -37,6 +37,7 @@
 //! # }
 //! ```
 
+pub mod bridges;
 pub mod codegen;
 pub mod session;
 pub mod tools;

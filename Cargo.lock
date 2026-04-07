@@ -1936,6 +1936,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "glob",
+ "md-5",
  "mol-common",
  "mol-config",
  "mol-llm",
@@ -1948,6 +1949,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "walkdir",
 ]
 
 [[package]]
