@@ -520,11 +520,13 @@ impl CodeAgent {
 
     /// Return `true` when the blueprint has the minimum required structure.
     ///
-    /// The Python original required at least 2 files with `generation_order`
-    /// fields.  We relax this to: at least 1 file with a non-empty name.
+    /// Matches the Python original: at least 2 files must have a
+    /// `generation_order` field set.
     pub fn is_valid_blueprint(bp: &Blueprint) -> bool {
-        let named = bp.files.iter().filter(|f| !f.effective_name().is_empty()).count();
-        named >= 1
+        let has_order = bp.files.iter()
+            .filter(|f| f.generation_order.is_some())
+            .count();
+        has_order >= 2
     }
 
     // ── Phase 2a: Sequential File Generation ──────────────────────────────
@@ -533,7 +535,7 @@ impl CodeAgent {
         &mut self,
         topic: &str,
         exp_plan: &str,
-        metric: &str,
+        _metric: &str,
         pkg_hint: &str,
         arch_spec: &str,
         blueprint: &Blueprint,
@@ -689,9 +691,18 @@ impl CodeAgent {
         let import_re =
             Regex::new(r"(?m)^(?:import\s+\S+|from\s+\S+\s+import\s+.+)").unwrap();
 
-        // Collect class blocks (very rough — from `class X:` to next `^class` or EOF)
-        let class_matches: Vec<_> = class_re.captures_iter(code).collect();
-        for cap in &class_matches {
+        // Collect class blocks — from `class X:` to the next `^class` or EOF,
+        // so that method search is scoped to each class's own body.
+        // Build a list of (byte_offset, capture) for each class header.
+        let class_captures: Vec<(usize, regex::Captures)> =
+            class_re.captures_iter(code)
+                .map(|cap| {
+                    let start = cap.get(0).unwrap().start();
+                    (start, cap)
+                })
+                .collect();
+
+        for (idx, (start, cap)) in class_captures.iter().enumerate() {
             let name = cap[1].to_owned();
             let bases = cap
                 .get(2)
@@ -704,9 +715,17 @@ impl CodeAgent {
                 })
                 .unwrap_or_default();
 
-            // Collect methods inside this class (approximate — all indented `def`)
+            // Slice the class body: from this class header to the next `^class`
+            // header (or EOF). This ensures methods are scoped to their class.
+            let end = class_captures
+                .get(idx + 1)
+                .map(|(next_start, _)| *next_start)
+                .unwrap_or(code.len());
+            let class_block = &code[*start..end];
+
+            // Collect methods inside this class block only
             let methods: Vec<MethodSummary> = method_re
-                .captures_iter(code)
+                .captures_iter(class_block)
                 .map(|mc| MethodSummary {
                     name: mc[1].to_owned(),
                     args: mc[2]
@@ -748,7 +767,7 @@ impl CodeAgent {
         topic: &str,
         exp_plan: &str,
         metric: &str,
-        pkg_hint: &str,
+        _pkg_hint: &str,
         arch_spec: &str,
     ) -> Result<HashMap<String, String>> {
         self.log_event("Phase 2.5: Hard validation gates");
@@ -875,6 +894,78 @@ impl CodeAgent {
                             ));
                         }
                     }
+                }
+            }
+        }
+
+        // 4. API correctness heuristic — NameError detection.
+        //    Look for traceback-style "name 'X' is not defined" patterns embedded
+        //    in code (e.g. inside string literals or comments left by the LLM).
+        //    Also flag calls to bare names that look like undefined globals: any
+        //    `name(` or `name.` usage where `name` is one of a set of commonly
+        //    confused builtins/stdlib items that differ between Python versions.
+        let name_error_literal_re =
+            Regex::new(r"name\s+'(\w+)'\s+is\s+not\s+defined").unwrap();
+        // Heuristic: referencing `undefined` (JS habit), `NULL` (SQL/C habit),
+        // or `True`/`False`/`None` spelled incorrectly.
+        let undefined_name_re =
+            Regex::new(r"\b(undefined|NULL|TRUE|FALSE|NONE|Null|False\b|True\b|None\b)").unwrap();
+        for (fname, code) in files.iter() {
+            if !fname.ends_with(".py") {
+                continue;
+            }
+            // Flag any embedded traceback NameError messages
+            for cap in name_error_literal_re.captures_iter(code) {
+                critical.push(format!(
+                    "[{fname}] NameError heuristic: name '{}' appears to be undefined",
+                    &cap[1]
+                ));
+            }
+            // Flag non-Python identifiers that would cause NameError at runtime
+            for cap in undefined_name_re.captures_iter(code) {
+                let hit = &cap[1];
+                // Filter out valid Python keywords embedded in strings/comments
+                if matches!(hit, "True" | "False" | "None") {
+                    continue; // these are valid Python
+                }
+                warnings.push(format!(
+                    "[{fname}] Possible NameError: non-Python identifier `{hit}` — use Python equivalents"
+                ));
+            }
+        }
+
+        // 5. Variable scoping heuristic — UnboundLocalError detection.
+        //    Look for the explicit augmented-assign-before-init pattern
+        //    (`x += ...` without a prior `x = <value>` in the file).
+        //    We cannot use negative lookahead (not supported by the `regex`
+        //    crate), so we use a string scan on the slice of code before the
+        //    augmented assignment.
+        let augmented_assign_re =
+            Regex::new(r"(?m)^([ \t]+)(\w+)\s*\+=").unwrap();
+        for (fname, code) in files.iter() {
+            if !fname.ends_with(".py") {
+                continue;
+            }
+            for cap in augmented_assign_re.captures_iter(code) {
+                let var_name = cap[2].to_owned();
+                // Byte offset of this augmented assignment in the file
+                let aug_offset = cap.get(0).unwrap().start();
+                // Look in the text before this point for a plain assignment:
+                // `<indent>var_name = ` (the char after `=` must not be `=`).
+                let prior_code = &code[..aug_offset];
+                let assign_pattern = format!("{var_name} = ");
+                let found = prior_code
+                    .lines()
+                    .any(|line| {
+                        let trimmed = line.trim_start();
+                        trimmed.starts_with(&assign_pattern)
+                            || trimmed.starts_with(&format!("{var_name}="))
+                                && !trimmed.starts_with(&format!("{var_name}=="))
+                    });
+                if !found {
+                    warnings.push(format!(
+                        "[{fname}] Possible UnboundLocalError: `{var_name}` used with `+=` before assignment"
+                    ));
                 }
             }
         }
@@ -1693,9 +1784,34 @@ generation_order:
 
     #[test]
     fn is_valid_blueprint_true() {
-        let yaml = "files:\n  - name: main.py\n    purpose: entry point";
+        // Must have >= 2 files with generation_order set — matches Python spec.
+        let yaml = r#"
+files:
+  - name: trainer.py
+    purpose: training loop
+    generation_order: 1
+  - name: main.py
+    purpose: entry point
+    generation_order: 2
+"#;
         let bp = CodeAgent::parse_blueprint(yaml).unwrap();
         assert!(CodeAgent::is_valid_blueprint(&bp));
+    }
+
+    #[test]
+    fn is_valid_blueprint_only_one_ordered_file() {
+        // Only 1 file has generation_order — should fail spec check.
+        let yaml = "files:\n  - name: main.py\n    purpose: entry point\n    generation_order: 1";
+        let bp = CodeAgent::parse_blueprint(yaml).unwrap();
+        assert!(!CodeAgent::is_valid_blueprint(&bp));
+    }
+
+    #[test]
+    fn is_valid_blueprint_no_generation_order() {
+        // Files present but none have generation_order — should fail spec check.
+        let yaml = "files:\n  - name: main.py\n    purpose: entry point";
+        let bp = CodeAgent::parse_blueprint(yaml).unwrap();
+        assert!(!CodeAgent::is_valid_blueprint(&bp));
     }
 
     #[test]
@@ -1841,6 +1957,101 @@ def train(model, data):
             critical.iter().any(|c| c.contains("ImportError") && c.contains("nonexistent")),
             "expected ImportError for nonexistent, got: {critical:?}"
         );
+    }
+
+    // ── Category 4: NameError heuristic ──────────────────────────────────
+
+    #[test]
+    fn hard_validate_name_error_literal_in_code() {
+        let mut files = HashMap::new();
+        files.insert(
+            "main.py".to_owned(),
+            "# name 'compute' is not defined\nresult = compute()".to_owned(),
+        );
+        let (critical, _) = CodeAgent::hard_validate(&files);
+        assert!(
+            critical.iter().any(|c| c.contains("NameError") && c.contains("compute")),
+            "expected NameError heuristic for embedded traceback text, got: {critical:?}"
+        );
+    }
+
+    #[test]
+    fn hard_validate_non_python_identifier_null() {
+        let mut files = HashMap::new();
+        files.insert(
+            "main.py".to_owned(),
+            "value = NULL\nprint(value)".to_owned(),
+        );
+        let (_, warnings) = CodeAgent::hard_validate(&files);
+        assert!(
+            warnings.iter().any(|w| w.contains("NULL")),
+            "expected NameError warning for NULL identifier, got: {warnings:?}"
+        );
+    }
+
+    // ── Category 5: UnboundLocalError heuristic ───────────────────────────
+
+    #[test]
+    fn hard_validate_unbound_local_augmented_assign() {
+        let mut files = HashMap::new();
+        files.insert(
+            "train.py".to_owned(),
+            "def train():\n    total += 1\n    print(total)\n".to_owned(),
+        );
+        let (_, warnings) = CodeAgent::hard_validate(&files);
+        assert!(
+            warnings.iter().any(|w| w.contains("UnboundLocalError") && w.contains("total")),
+            "expected UnboundLocalError warning for augmented assign before init, got: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn hard_validate_no_unbound_local_when_assigned_first() {
+        let mut files = HashMap::new();
+        files.insert(
+            "train.py".to_owned(),
+            "def train():\n    total = 0\n    total += 1\n    print(total)\n".to_owned(),
+        );
+        let (_, warnings) = CodeAgent::hard_validate(&files);
+        assert!(
+            !warnings.iter().any(|w| w.contains("UnboundLocalError") && w.contains("total")),
+            "should not flag augmented assign when variable is assigned first, got: {warnings:?}"
+        );
+    }
+
+    // ── Code summary scoping ──────────────────────────────────────────────
+
+    #[test]
+    fn build_code_summary_methods_scoped_to_class() {
+        let code = r#"
+class ModelA(nn.Module):
+    def __init__(self):
+        pass
+
+    def forward(self, x):
+        return x
+
+class ModelB(nn.Module):
+    def __init__(self):
+        pass
+
+    def predict(self, x):
+        return x
+"#;
+        let summary = CodeAgent::build_code_summary("models.py", code);
+        assert_eq!(summary.classes.len(), 2);
+        let class_a = summary.classes.iter().find(|c| c.name == "ModelA").unwrap();
+        let class_b = summary.classes.iter().find(|c| c.name == "ModelB").unwrap();
+        // ModelA should have forward but NOT predict
+        assert!(class_a.methods.iter().any(|m| m.name == "forward"),
+            "ModelA should have forward method");
+        assert!(!class_a.methods.iter().any(|m| m.name == "predict"),
+            "ModelA should NOT have predict (belongs to ModelB)");
+        // ModelB should have predict but NOT forward
+        assert!(class_b.methods.iter().any(|m| m.name == "predict"),
+            "ModelB should have predict method");
+        assert!(!class_b.methods.iter().any(|m| m.name == "forward"),
+            "ModelB should NOT have forward (belongs to ModelA)");
     }
 
     // ── Syntax heuristic ──────────────────────────────────────────────────
