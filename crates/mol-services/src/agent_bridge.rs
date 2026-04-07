@@ -2068,19 +2068,11 @@ pub fn on_agent_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
 
     // Coding layer: check S12 sanity
     if layer == "coding" && !project_id.is_empty() {
-        let sanity_path = PathBuf::from(&run_dir).join("stage-12/sanity_report.json");
-        if sanity_path.exists() {
-            if let Some(report) = read_json(&sanity_path) {
-                if report.get("status").and_then(|v| v.as_str()) == Some("fail") {
-                    messages.push(msg_log_sys(
-                        &format!("S12 SANITY_CHECK loop exhausted for project [{project_id}], manual intervention required"),
-                        "error",
-                    ));
-                    messages.extend(pause_project(state, &project_id));
-                    messages.push(msg_project_list(list_all_projects(state)));
-                    return messages;
-                }
-            }
+        let sanity_msgs = check_s12_sanity_failure(state, &agent_id);
+        if !sanity_msgs.is_empty() {
+            messages.extend(sanity_msgs);
+            messages.push(msg_project_list(list_all_projects(state)));
+            return messages;
         }
     }
 
@@ -2413,9 +2405,8 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
         "chat_input" => {
             let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
             let target_layer = data.get("targetLayer").and_then(|v| v.as_str()).unwrap_or("all");
-            // Keyword-based intent: ends with '?' → query
-            let is_query = content.ends_with('?') || content.ends_with('？');
-            if is_query {
+            let intent = classify_chat_intent_keywords(&content);
+            if intent == "query" {
                 let summary = build_status_summary(state, target_layer);
                 messages.push(msg_feedback_ack(&format!("qs-{}", uid()), &summary, target_layer));
             } else {
@@ -2427,6 +2418,68 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                     target_layer,
                 ));
             }
+        }
+
+        "quick_submit_project" => {
+            let topic = data.get("topic").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let project_id = data.get("projectId").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let mode = data.get("mode").and_then(|v| v.as_str()).unwrap_or("lab").to_string();
+            let research_angles: Vec<String> = data
+                .get("researchAngles")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            let reference_papers: Vec<String> = data
+                .get("referencePapers")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            let reference_uploads: Vec<Value> = data
+                .get("referenceUploads")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default();
+            let path_overrides: HashMap<String, String> = data
+                .get("pathOverrides")
+                .and_then(|v| v.as_object())
+                .map(|obj| {
+                    obj.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if topic.is_empty() {
+                messages.push(msg_log_sys("请输入研究主题", "error"));
+                return messages;
+            }
+
+            let base_id = if project_id.is_empty() {
+                slugify(&topic, 40)
+            } else {
+                project_id
+            };
+            let base_id = {
+                let existing = state.projects_dir().join(&base_id);
+                if existing.exists() {
+                    format!("{base_id}-{}", uid())
+                } else {
+                    base_id
+                }
+            };
+
+            messages.extend(quick_submit_project(
+                state,
+                &topic,
+                &base_id,
+                &mode,
+                &research_angles,
+                &reference_papers,
+                &reference_uploads,
+                &path_overrides,
+            ));
+            messages.extend(schedule_idle_agents(state));
+            messages.push(msg_project_list(list_all_projects(state)));
         }
 
         "set_discussion_mode" => {
@@ -2532,10 +2585,13 @@ pub async fn poll_loop(state: Arc<BridgeState>, interval_secs: f64) {
 
                 if is_disc_s8 {
                     all_messages.extend(on_discussion_s8_done(&state, agent_id));
-                } else if !is_s7_only && !is_factory {
+                } else if is_s7_only {
+                    all_messages.extend(_on_idea_factory_s7_done(&state, agent_id));
+                } else if is_factory {
+                    all_messages.extend(_on_idea_factory_done(&state, agent_id));
+                } else {
                     done_agents.push(agent_id.clone());
                 }
-                // Idea factory handlers omitted for brevity — extend here
             }
 
             if prev_status == Some(AgentStatus::Working) && new_status == Some(AgentStatus::Error) {
@@ -2664,4 +2720,833 @@ pub fn build_router(state: Arc<BridgeState>) -> Router {
     Router::new()
         .route("/ws", get(ws_handler))
         .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// Intent classification
+// ---------------------------------------------------------------------------
+
+/// Classify chat input as "query" or "feedback" using Chinese/English keywords.
+///
+/// Query indicators: 状态/进度/进展/情况/怎么/如何/多少/哪些/什么/完成/结果/有没有
+///                   plus English words: status/progress/how/what/which/done/result
+///                   Boosted by trailing ? / ？ and particles 吗/呢.
+/// Feedback indicators: 请/应该/建议/改/修/调/优化/停/暂停/重试/加速
+///                      plus English: please/should/suggest/change/stop/pause/retry/adjust
+///                      Boosted when len > 80.
+///
+/// Returns "query" or "feedback".
+pub fn classify_chat_intent_keywords(text: &str) -> &'static str {
+    let lower = text.to_lowercase();
+
+    let query_keywords_cn = [
+        "状态", "进度", "进展", "情况", "怎么", "如何", "多少", "哪些", "什么", "完成",
+        "结果", "有没有",
+    ];
+    let query_keywords_en = [
+        "status", "progress", "how", "what", "which", "done", "result",
+    ];
+    let feedback_keywords_cn = [
+        "请", "应该", "建议", "改", "修", "调", "优化", "停", "暂停", "重试", "加速",
+    ];
+    let feedback_keywords_en = [
+        "please", "should", "suggest", "change", "stop", "pause", "retry", "adjust",
+    ];
+
+    let mut query_score: i32 = 0;
+    let mut feedback_score: i32 = 0;
+
+    for kw in &query_keywords_cn {
+        if text.contains(kw) {
+            query_score += 2;
+        }
+    }
+    for kw in &query_keywords_en {
+        if lower.contains(kw) {
+            query_score += 1;
+        }
+    }
+    for kw in &feedback_keywords_cn {
+        if text.contains(kw) {
+            feedback_score += 2;
+        }
+    }
+    for kw in &feedback_keywords_en {
+        if lower.contains(kw) {
+            feedback_score += 1;
+        }
+    }
+
+    // Boost query score for question suffixes and particles
+    if text.ends_with('?') || text.ends_with('？') {
+        query_score += 3;
+    }
+    if text.ends_with("吗") || text.ends_with("呢") {
+        query_score += 2;
+    }
+
+    // Boost feedback score for long instructive text
+    if text.chars().count() > 80 {
+        feedback_score += 2;
+    }
+
+    if query_score >= feedback_score {
+        "query"
+    } else {
+        "feedback"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// S12 sanity check
+// ---------------------------------------------------------------------------
+
+/// Check if S12 sanity_report.json shows "fail" status.
+/// If so, read fix_log.json, build a Chinese error detail, persist intervention
+/// reason to project_meta.json, pause the project, and return notification messages.
+pub fn check_s12_sanity_failure(state: &BridgeState, agent_id: &str) -> Vec<Value> {
+    let mut messages = Vec::new();
+
+    let (project_id, run_dir) = {
+        let Some(a) = state.agents.get(agent_id) else {
+            return messages;
+        };
+        (a.project_id.clone(), a.run_dir.clone())
+    };
+
+    if project_id.is_empty() || run_dir.is_empty() {
+        return messages;
+    }
+
+    let sanity_path = PathBuf::from(&run_dir).join("stage-12/sanity_report.json");
+    if !sanity_path.exists() {
+        return messages;
+    }
+
+    let Some(report) = read_json(&sanity_path) else {
+        return messages;
+    };
+
+    if report.get("status").and_then(|v| v.as_str()) != Some("fail") {
+        return messages;
+    }
+
+    // Read fix_log.json for error details
+    let fix_log_path = PathBuf::from(&run_dir).join("stage-12/fix_log.json");
+    let error_detail = if let Some(fix_log) = read_json(&fix_log_path) {
+        if let Some(arr) = fix_log.as_array() {
+            if let Some(last) = arr.last() {
+                last.get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("未知错误")
+                    .chars()
+                    .take(200)
+                    .collect::<String>()
+            } else {
+                "未知错误".to_string()
+            }
+        } else {
+            fix_log
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("未知错误")
+                .chars()
+                .take(200)
+                .collect()
+        }
+    } else {
+        "未知错误".to_string()
+    };
+
+    // Find experiment dir from stage-11
+    let exp_dir = PathBuf::from(&run_dir).join("stage-11/experiment");
+    let exp_dir_str = if exp_dir.exists() {
+        exp_dir.to_string_lossy().to_string()
+    } else {
+        format!("{}/stage-11", run_dir)
+    };
+
+    let intervention_reason = format!(
+        "S12 代码验收失败，循环修复次数耗尽。实验目录：{}。错误详情：{}",
+        exp_dir_str, error_detail
+    );
+
+    // Persist intervention reason to project_meta.json
+    let meta_path = PathBuf::from(&run_dir).join("project_meta.json");
+    if let Some(mut meta) = read_json(&meta_path).or_else(|| Some(serde_json::json!({}))) {
+        if let Some(obj) = meta.as_object_mut() {
+            obj.insert(
+                "intervention".to_string(),
+                Value::String(intervention_reason.clone()),
+            );
+            obj.insert("paused_at".to_string(), Value::Number(now_ms().into()));
+        }
+        let _ = write_json(&meta_path, &meta);
+    }
+
+    messages.push(msg_log_sys(
+        &format!(
+            "S12 SANITY_CHECK 验收失败，项目 [{}] 需要人工干预",
+            project_id
+        ),
+        "error",
+    ));
+    messages.push(msg_system(&format!(
+        "验收完成，代码修复失败：{}\n{}",
+        project_id, error_detail
+    )));
+
+    messages.extend(pause_project(state, &project_id));
+    messages
+}
+
+// ---------------------------------------------------------------------------
+// Passthrough agent
+// ---------------------------------------------------------------------------
+
+/// For passthrough layers: scan stage dirs in layer range, mark existing ones
+/// as "completed" with artifacts, mark missing ones as "failed". Set agent
+/// status to "done".
+pub fn passthrough_agent(state: &BridgeState, agent_id: &str) -> Vec<Value> {
+    let mut messages = Vec::new();
+
+    let (layer, run_dir, project_id) = {
+        let Some(a) = state.agents.get(agent_id) else {
+            return messages;
+        };
+        (a.layer.clone(), a.run_dir.clone(), a.project_id.clone())
+    };
+
+    let (range_start, range_end) = layer_range(&layer);
+    let run_dir_path = PathBuf::from(&run_dir);
+
+    {
+        let Some(mut ae) = state.agents.get_mut(agent_id) else {
+            return messages;
+        };
+        let agent = ae.value_mut();
+
+        for s in range_start..=range_end {
+            let stage_dir = run_dir_path.join(format!("stage-{s:02}"));
+            if stage_dir.is_dir() {
+                agent.stage_progress.insert(s, "completed".to_string());
+                messages.push(msg_stage_update(agent_id, s, "completed"));
+                messages.push(msg_log_agent(
+                    agent,
+                    &format!("{} passthrough completed", stage_name(s)),
+                    "success",
+                ));
+
+                // Emit display artifacts
+                for &expected in stage_outputs(s) {
+                    let artifact_path = stage_dir.join(expected.trim_end_matches('/'));
+                    if !artifact_path.exists() || !is_display_artifact(expected) {
+                        continue;
+                    }
+                    let key = format!("{s}:{expected}");
+                    if agent.known_artifacts.contains(&key) {
+                        continue;
+                    }
+                    agent.known_artifacts.insert(key);
+                    let size = if artifact_path.is_dir() {
+                        "dir".to_string()
+                    } else {
+                        format!(
+                            "{:.1} KB",
+                            artifact_path.metadata().map(|m| m.len()).unwrap_or(0) as f64
+                                / 1024.0
+                        )
+                    };
+                    let content = extract_artifact_summary(&artifact_path, expected);
+                    messages.push(msg_artifact(
+                        repo_for_stage(s),
+                        expected,
+                        &agent.name,
+                        &size,
+                        &project_id,
+                        &content,
+                        Some(s),
+                    ));
+                }
+            } else {
+                agent.stage_progress.insert(s, "failed".to_string());
+                messages.push(msg_stage_update(agent_id, s, "failed"));
+            }
+        }
+
+        agent.status = AgentStatus::Done;
+        agent.current_task = String::new();
+        agent.current_stage = None;
+        messages.push(msg_agent_update(agent));
+        messages.push(msg_log_agent(
+            agent,
+            &format!("Passthrough complete for layer {}", layer),
+            "info",
+        ));
+    }
+
+    messages
+}
+
+// ---------------------------------------------------------------------------
+// Config generation from template
+// ---------------------------------------------------------------------------
+
+/// Generate project YAML config from config_template.yaml.
+/// Replaces __PROJECT_ID__, __TOPIC__, __REFERENCE_PAPERS__ placeholders,
+/// updates path overrides with regex, and saves to project_configs/{project_id}.yaml.
+pub fn generate_config_from_template(
+    state: &BridgeState,
+    project_id: &str,
+    topic: &str,
+    role_prompt: &str,
+    reference_papers: &[String],
+    codebases_dir: &str,
+    datasets_dir: &str,
+    checkpoints_dir: &str,
+) -> anyhow::Result<String> {
+    use regex::Regex;
+
+    // Find template file
+    let template_path = {
+        let candidates = [
+            PathBuf::from(&state.runs_base_dir).join("config_template.yaml"),
+            PathBuf::from(&state.agent_package_dir).join("config_template.yaml"),
+            PathBuf::from(&state.runs_base_dir)
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("config_template.yaml"),
+        ];
+        candidates
+            .into_iter()
+            .find(|p| p.exists())
+            .ok_or_else(|| anyhow::anyhow!("配置生成失败: config_template.yaml not found"))?
+    };
+
+    let template_text = std::fs::read_to_string(&template_path)
+        .map_err(|e| anyhow::anyhow!("配置生成失败: {e}"))?;
+
+    // Replace simple placeholders
+    let papers_yaml = reference_papers
+        .iter()
+        .map(|p| format!("  - \"{}\"", p.replace('"', "\\\"")))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut config_text = template_text
+        .replace("__PROJECT_ID__", project_id)
+        .replace("__TOPIC__", topic)
+        .replace("__ROLE_PROMPT__", role_prompt)
+        .replace("__REFERENCE_PAPERS__", &papers_yaml);
+
+    // Update path overrides with regex
+    let path_updates = [
+        ("codebases_dir", codebases_dir),
+        ("datasets_dir", datasets_dir),
+        ("checkpoints_dir", checkpoints_dir),
+    ];
+    for (key, val) in &path_updates {
+        if !val.is_empty() {
+            let re = Regex::new(&format!(r"(?m)^(\s*{key}\s*:\s*).*$"))
+                .map_err(|e| anyhow::anyhow!("regex error: {e}"))?;
+            config_text = re
+                .replace_all(&config_text, &format!("${{1}}{val}"))
+                .into_owned();
+        }
+    }
+
+    // Save to project_configs/{project_id}.yaml
+    let configs_dir = PathBuf::from(&state.runs_base_dir).join("project_configs");
+    std::fs::create_dir_all(&configs_dir)
+        .map_err(|e| anyhow::anyhow!("配置生成失败: {e}"))?;
+    let out_path = configs_dir.join(format!("{project_id}.yaml"));
+    std::fs::write(&out_path, &config_text)
+        .map_err(|e| anyhow::anyhow!("配置生成失败: {e}"))?;
+
+    Ok(out_path.to_string_lossy().to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Reference upload helpers
+// ---------------------------------------------------------------------------
+
+/// Sanitize an upload filename: keep only ASCII [\w.\-], ensure .pdf suffix.
+/// Non-ASCII characters (e.g., Chinese) are replaced with underscores.
+pub fn safe_reference_upload_name(filename: &str) -> String {
+    let sanitized: String = filename
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    // Collapse runs of underscores/dots into single underscore
+    let mut result = String::with_capacity(sanitized.len());
+    let mut last_was_sep = false;
+    for c in sanitized.chars() {
+        if c == '_' {
+            if !last_was_sep {
+                result.push('_');
+            }
+            last_was_sep = true;
+        } else {
+            result.push(c);
+            last_was_sep = false;
+        }
+    }
+    let result = result.trim_matches('_').to_string();
+    let result = if result.is_empty() { "upload".to_string() } else { result };
+
+    if result.to_lowercase().ends_with(".pdf") {
+        result
+    } else {
+        format!("{}.pdf", result)
+    }
+}
+
+/// Save base64-encoded PDF uploads to {project_dir}/reference_uploads/ directory.
+/// Returns list of saved file paths.
+pub fn persist_reference_uploads(project_dir: &Path, reference_uploads: &[Value]) -> Vec<String> {
+    use base64::Engine;
+
+    let uploads_dir = project_dir.join("reference_uploads");
+    if let Err(e) = std::fs::create_dir_all(&uploads_dir) {
+        warn!("Failed to create reference_uploads dir: {e}");
+        return Vec::new();
+    }
+
+    let mut saved_paths = Vec::new();
+    for upload in reference_uploads {
+        let filename = upload
+            .get("filename")
+            .and_then(|v| v.as_str())
+            .unwrap_or("upload.pdf");
+        let data_b64 = upload
+            .get("data")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if data_b64.is_empty() {
+            continue;
+        }
+
+        // Strip data URI prefix if present (data:application/pdf;base64,...)
+        let raw_b64 = if let Some(idx) = data_b64.find(',') {
+            &data_b64[idx + 1..]
+        } else {
+            data_b64
+        };
+
+        match base64::engine::general_purpose::STANDARD.decode(raw_b64) {
+            Ok(bytes) => {
+                let safe_name = safe_reference_upload_name(filename);
+                let dest = uploads_dir.join(&safe_name);
+                match std::fs::write(&dest, &bytes) {
+                    Ok(_) => {
+                        info!("Saved reference upload: {}", dest.display());
+                        saved_paths.push(dest.to_string_lossy().to_string());
+                    }
+                    Err(e) => {
+                        warn!("Failed to write reference upload {safe_name}: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                warn!("Failed to decode base64 for {filename}: {e}");
+            }
+        }
+    }
+    saved_paths
+}
+
+// ---------------------------------------------------------------------------
+// Known lab angles and role prompt builder
+// ---------------------------------------------------------------------------
+
+/// Maps research angle name → Chinese role prompt.
+pub fn known_lab_angles() -> HashMap<&'static str, &'static str> {
+    let mut map = HashMap::new();
+    map.insert(
+        "CV",
+        "你是一名计算机视觉研究员，专注于图像识别、目标检测、分割等视觉感知任务。\
+你善于分析视觉模型的架构设计，理解卷积神经网络、Transformer等视觉骨干网络的原理，\
+并能结合具体任务提出创新性的视觉算法方案。",
+    );
+    map.insert(
+        "VLM",
+        "你是一名视觉语言模型研究员，专注于多模态理解与生成任务。\
+你熟悉CLIP、BLIP、LLaVA等视觉语言模型，理解视觉与语言的对齐机制，\
+并能针对多模态场景提出创新性的跨模态融合方案。",
+    );
+    map.insert(
+        "World Model",
+        "你是一名世界模型研究员，专注于环境建模、预测与规划。\
+你深入理解基于学习的世界模型（如Dreamer、RSSM），擅长将世界模型与强化学习、\
+机器人规划结合，并能提出提升模型泛化与样本效率的创新方法。",
+    );
+    map.insert(
+        "VLA",
+        "你是一名视觉-语言-动作（VLA）模型研究员，专注于机器人具身智能。\
+你熟悉RT-2、OpenVLA等端到端机器人学习框架，理解如何将视觉感知、语言指令与\
+机器人动作控制统一建模，并能提出提升机器人泛化能力的创新方案。",
+    );
+    map
+}
+
+/// Return the known role prompt for the given angle, or generate a generic Chinese prompt.
+pub fn build_role_prompt(angle_name: &str, main_topic: &str) -> String {
+    let angles = known_lab_angles();
+    if let Some(&prompt) = angles.get(angle_name) {
+        return prompt.to_string();
+    }
+    format!(
+        "你是一名{}领域的研究员，专注于{}相关的前沿研究。\
+你善于分析该领域的最新进展，能够提出创新性的研究方案，并结合实际应用场景给出切实可行的技术路线。",
+        angle_name, main_topic
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Quick submit project (full implementation)
+// ---------------------------------------------------------------------------
+
+/// Full project submission supporting "reproduce" and "lab" modes.
+///
+/// - "reproduce" mode: single-agent pipeline.
+/// - "lab" mode: multi-angle parallel research with role prompts.
+#[allow(clippy::too_many_arguments)]
+pub fn quick_submit_project(
+    state: &BridgeState,
+    topic: &str,
+    project_id: &str,
+    mode: &str,
+    research_angles: &[String],
+    reference_papers: &[String],
+    reference_uploads: &[Value],
+    path_overrides: &HashMap<String, String>,
+) -> Vec<Value> {
+    let mut messages = Vec::new();
+
+    let proj_dir = state.projects_dir().join(project_id);
+    let _ = std::fs::create_dir_all(&proj_dir);
+
+    // Persist reference uploads
+    if !reference_uploads.is_empty() {
+        let saved = persist_reference_uploads(&proj_dir, reference_uploads);
+        if !saved.is_empty() {
+            messages.push(msg_log_sys(
+                &format!("已保存 {} 个参考文献上传文件", saved.len()),
+                "info",
+            ));
+        }
+    }
+
+    let codebases_dir = path_overrides.get("codebases_dir").map(|s| s.as_str()).unwrap_or("");
+    let datasets_dir = path_overrides.get("datasets_dir").map(|s| s.as_str()).unwrap_or("");
+    let checkpoints_dir = path_overrides.get("checkpoints_dir").map(|s| s.as_str()).unwrap_or("");
+
+    let disc_mode = *state.discussion_mode.blocking_read();
+
+    match mode {
+        "reproduce" => {
+            // Single-agent reproduce pipeline
+            let role_prompt = "";
+            let config_path = generate_config_from_template(
+                state,
+                project_id,
+                topic,
+                role_prompt,
+                reference_papers,
+                codebases_dir,
+                datasets_dir,
+                checkpoints_dir,
+            )
+            .unwrap_or_else(|e| {
+                warn!("{e}");
+                String::new()
+            });
+
+            messages.push(msg_log_sys(
+                &format!("项目 [{project_id}] 复现模式提交中…"),
+                "info",
+            ));
+            messages.extend(submit_new_project(
+                state,
+                project_id,
+                &config_path,
+                topic,
+                "reproduce",
+                false,
+            ));
+        }
+
+        "lab" | _ => {
+            // Lab mode: one sub-agent per research angle
+            let effective_angles: Vec<String> = if research_angles.is_empty() {
+                vec!["CV".to_string(), "VLM".to_string()]
+            } else {
+                research_angles.to_vec()
+            };
+
+            state
+                .lab_batches
+                .insert(project_id.to_string(), effective_angles.len());
+
+            messages.push(msg_log_sys(
+                &format!(
+                    "项目 [{project_id}] Lab 模式，{} 个研究方向并行",
+                    effective_angles.len()
+                ),
+                "info",
+            ));
+
+            for angle in &effective_angles {
+                let sub_id = format!("{}-{}", project_id, slugify(angle, 20));
+                let sub_dir = proj_dir.join(format!("run-{}", slugify(angle, 20)));
+                let _ = std::fs::create_dir_all(&sub_dir);
+
+                let role_prompt = build_role_prompt(angle, topic);
+                let angled_topic = format!("[{angle}] {topic}");
+
+                let config_path = generate_config_from_template(
+                    state,
+                    &sub_id,
+                    &angled_topic,
+                    &role_prompt,
+                    reference_papers,
+                    codebases_dir,
+                    datasets_dir,
+                    checkpoints_dir,
+                )
+                .unwrap_or_else(|e| {
+                    warn!("{e}");
+                    String::new()
+                });
+
+                let run_dir = sub_dir.to_string_lossy().to_string();
+                save_project_meta(&run_dir, project_id, &config_path, &angled_topic, "lab");
+
+                let task = Task {
+                    id: format!("task-{}", uid()),
+                    project_id: project_id.to_string(),
+                    run_dir,
+                    config_path,
+                    topic: angled_topic.clone(),
+                    source_layer: "init".to_string(),
+                    target_layer: "idea".to_string(),
+                    status: TaskStatus::Pending,
+                    assigned_to: None,
+                    created_at: now_ms(),
+                    assigned_at: 0,
+                    completed_at: 0,
+                };
+
+                if let Some(mut q) = state.queues.get_mut("init_to_idea") {
+                    q.push(task);
+                }
+
+                messages.push(msg_log_sys(
+                    &format!("研究方向 [{angle}] 已加入队列 (sub_id={sub_id})"),
+                    "info",
+                ));
+            }
+
+            let _ = disc_mode; // discussion mode handled by on_agent_done
+            messages.push(msg_queue_update(state));
+        }
+    }
+
+    messages.push(msg_project_list(list_all_projects(state)));
+    messages
+}
+
+// ---------------------------------------------------------------------------
+// Idea factory stubs
+// ---------------------------------------------------------------------------
+
+/// Launch an idea-factory agent run. Not yet fully implemented.
+pub fn _launch_idea_factory_run(
+    _state: &BridgeState,
+    _agent_id: &str,
+    _batch_id: &str,
+) -> Vec<Value> {
+    warn!("_launch_idea_factory_run: not yet implemented");
+    Vec::new()
+}
+
+/// Called when an idea-factory agent completes all stages. Not yet fully implemented.
+pub fn _on_idea_factory_done(_state: &BridgeState, _agent_id: &str) -> Vec<Value> {
+    warn!("_on_idea_factory_done: not yet implemented");
+    Vec::new()
+}
+
+/// Called when an idea-factory S7-only agent finishes. Not yet fully implemented.
+pub fn _on_idea_factory_s7_done(_state: &BridgeState, _agent_id: &str) -> Vec<Value> {
+    warn!("_on_idea_factory_s7_done: not yet implemented");
+    Vec::new()
+}
+
+// ---------------------------------------------------------------------------
+// Cross-project discussion stub
+// ---------------------------------------------------------------------------
+
+/// Trigger a cross-project discussion. Not yet fully implemented.
+pub fn _trigger_cross_project_discussion(
+    _state: &BridgeState,
+    _project_a: &str,
+    _project_b: &str,
+) -> Vec<Value> {
+    warn!("_trigger_cross_project_discussion: not yet implemented");
+    Vec::new()
+}
+
+// ---------------------------------------------------------------------------
+// Model config stub
+// ---------------------------------------------------------------------------
+
+/// Create a model-specific YAML config. Not yet fully implemented.
+pub fn _create_model_config(
+    _state: &BridgeState,
+    _project_id: &str,
+    _model_name: &str,
+) -> anyhow::Result<String> {
+    warn!("_create_model_config: not yet implemented");
+    anyhow::bail!("_create_model_config not yet implemented")
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- classify_chat_intent_keywords ---
+
+    #[test]
+    fn test_classify_query_question_mark() {
+        assert_eq!(classify_chat_intent_keywords("当前项目进度如何？"), "query");
+        assert_eq!(classify_chat_intent_keywords("进展怎么样?"), "query");
+    }
+
+    #[test]
+    fn test_classify_query_chinese_particles() {
+        assert_eq!(classify_chat_intent_keywords("项目完成了吗"), "query");
+        assert_eq!(classify_chat_intent_keywords("还有多少任务呢"), "query");
+    }
+
+    #[test]
+    fn test_classify_query_english_keywords() {
+        assert_eq!(classify_chat_intent_keywords("what is the status?"), "query");
+        assert_eq!(classify_chat_intent_keywords("how many stages done?"), "query");
+    }
+
+    #[test]
+    fn test_classify_feedback_chinese() {
+        assert_eq!(classify_chat_intent_keywords("请暂停当前项目"), "feedback");
+        assert_eq!(classify_chat_intent_keywords("建议优化学习率"), "feedback");
+    }
+
+    #[test]
+    fn test_classify_feedback_english() {
+        assert_eq!(classify_chat_intent_keywords("please stop the current run"), "feedback");
+        assert_eq!(classify_chat_intent_keywords("you should adjust the batch size"), "feedback");
+    }
+
+    #[test]
+    fn test_classify_feedback_long_text() {
+        // Long text without question → feedback
+        let long = "我认为当前的实验方案需要做出一些改动，具体来说应当调整超参数的设置方式，特别是学习率和批次大小，这样才能使结果更稳定可靠。";
+        assert_eq!(classify_chat_intent_keywords(long), "feedback");
+    }
+
+    // --- safe_reference_upload_name ---
+
+    #[test]
+    fn test_safe_upload_name_already_pdf() {
+        let result = safe_reference_upload_name("my-paper_2024.pdf");
+        assert!(result.ends_with(".pdf"));
+        assert!(!result.contains(' '));
+    }
+
+    #[test]
+    fn test_safe_upload_name_no_pdf_suffix() {
+        let result = safe_reference_upload_name("paper2024");
+        assert!(result.ends_with(".pdf"), "got: {result}");
+    }
+
+    #[test]
+    fn test_safe_upload_name_special_chars() {
+        let result = safe_reference_upload_name("my paper (final).pdf");
+        assert!(!result.contains(' '));
+        assert!(!result.contains('('));
+        assert!(!result.contains(')'));
+        assert!(result.ends_with(".pdf"), "got: {result}");
+    }
+
+    #[test]
+    fn test_safe_upload_name_chinese() {
+        // Chinese chars should be replaced
+        let result = safe_reference_upload_name("论文.pdf");
+        assert!(result.ends_with(".pdf"), "got: {result}");
+        // No Chinese characters
+        assert!(result.chars().all(|c| c.is_ascii()), "got: {result}");
+    }
+
+    // --- build_role_prompt ---
+
+    #[test]
+    fn test_build_role_prompt_known_angle() {
+        let prompt = build_role_prompt("CV", "目标检测");
+        assert!(prompt.contains("计算机视觉"), "expected CV prompt, got: {prompt}");
+    }
+
+    #[test]
+    fn test_build_role_prompt_vlm() {
+        let prompt = build_role_prompt("VLM", "多模态理解");
+        assert!(prompt.contains("视觉语言模型"), "got: {prompt}");
+    }
+
+    #[test]
+    fn test_build_role_prompt_world_model() {
+        let prompt = build_role_prompt("World Model", "世界建模");
+        assert!(prompt.contains("世界模型"), "got: {prompt}");
+    }
+
+    #[test]
+    fn test_build_role_prompt_unknown_angle() {
+        let prompt = build_role_prompt("Quantum", "量子计算");
+        assert!(prompt.contains("Quantum"), "got: {prompt}");
+        assert!(prompt.contains("量子计算"), "got: {prompt}");
+    }
+
+    // --- passthrough_agent logic (unit-level, without full BridgeState) ---
+
+    #[test]
+    fn test_layer_range_idea() {
+        let (start, end) = layer_range("idea");
+        assert_eq!(start, 1);
+        assert_eq!(end, 8);
+    }
+
+    #[test]
+    fn test_layer_range_coding() {
+        let (start, end) = layer_range("coding");
+        assert_eq!(start, 10);
+        assert_eq!(end, 13);
+    }
+
+    #[test]
+    fn test_known_lab_angles_contains_four() {
+        let angles = known_lab_angles();
+        assert!(angles.contains_key("CV"));
+        assert!(angles.contains_key("VLM"));
+        assert!(angles.contains_key("World Model"));
+        assert!(angles.contains_key("VLA"));
+    }
 }

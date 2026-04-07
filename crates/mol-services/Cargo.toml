@@ -24,3 +24,5 @@ mol-common = { workspace = true }
 mol-config = { workspace = true }
 mol-llm = { workspace = true }
 mol-pipeline = { workspace = true }
+base64 = { workspace = true }
+regex = { workspace = true }
