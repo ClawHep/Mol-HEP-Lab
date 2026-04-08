@@ -1,0 +1,31 @@
+# HEP stage-to-agent mapping.
+# Keys are SCREAMING_SNAKE_CASE stage names (from Stage::name()).
+# Values are agent file stems in agents/ directory.
+stage_agents:
+  TOPIC_INIT: lead-analyst
+  PROBLEM_DECOMPOSE: lead-analyst
+  SEARCH_STRATEGY: investigator
+  LITERATURE_COLLECT: investigator
+  LITERATURE_SCREEN: investigator
+  KNOWLEDGE_EXTRACT: investigator
+  SYNTHESIS: theory-scout
+  HYPOTHESIS_GEN: lead-analyst
+  EXPERIMENT_DESIGN: lead-analyst
+  CODEBASE_SEARCH: signal-lead
+  CODE_GENERATION: signal-lead
+  SANITY_CHECK: cross-checker
+  RESOURCE_PLANNING: lead-analyst
+  EXPERIMENT_RUN: signal-lead
+  ITERATIVE_REFINE: systematics-fitter
+  RESULT_ANALYSIS: lead-analyst
+  RESEARCH_DECISION: arbiter
+  KNOWLEDGE_SUMMARY: lead-analyst
+  PAPER_OUTLINE: note-writer
+  PAPER_DRAFT: note-writer
+  PEER_REVIEW: physics-reviewer
+  PAPER_REVISION: note-writer
+  QUALITY_GATE: arbiter
+  KNOWLEDGE_ARCHIVE: note-writer
+  EXPORT_PUBLISH: note-writer
+  CITATION_VERIFY: note-writer
+  # DISCUSSION: absent = no agent

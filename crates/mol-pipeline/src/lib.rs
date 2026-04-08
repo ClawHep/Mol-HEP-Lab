@@ -16,6 +16,7 @@
 pub mod checkpoint;
 pub mod contracts;
 pub mod executor;
+pub mod knowledge;
 pub mod runner;
 pub mod runtimes;
 pub mod stages;
@@ -37,5 +38,7 @@ pub use checkpoint::{read_checkpoint, resume_from_checkpoint, write_checkpoint, 
 pub use contracts::{get_contract, validate_inputs, validate_outputs, ContractOverrides, StageContract};
 
 pub use executor::{execute_stage, MolConfig, StageContext, StageResult};
+
+pub use knowledge::{AgentMapping, DatasetsConfig};
 
 pub use runner::{execute_iterative_pipeline, execute_pipeline, PipelineConfig, PipelineSummary};
