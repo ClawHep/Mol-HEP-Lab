@@ -1,15 +1,16 @@
 # Design: Unified Template Architecture + Runner Heartbeat Monitoring
 
 **Date**: 2026-04-08
-**Status**: In Review
+**Status**: Approved
 **Scope**: 3-phase refactoring across `crates/mol-pipeline`, `crates/mol-common`, `hep/templates/`
 
 ## Problem
 
 The Rust general pipeline and HEP vertical pipeline evolved independently. End-to-end testing revealed:
 
-1. **25 hardcoded system prompts** in stage executors — generic ML-oriented, no HEP domain knowledge
-2. **26 hardcoded fallback templates** (incl. `discussion.rs`) — produce fake data when LLM fails, silently masking failures
+1. **24 hardcoded system prompts** in stage executors (phase1–5.rs) — generic ML-oriented, no HEP domain knowledge
+2. **24 hardcoded fallback templates** in phase1–5.rs — produce fake data when LLM fails, silently masking failures
+2b. **`discussion.rs`** uses a 130-line `format!()` macro producing a fully hardcoded transcript — no LLM call at all
 3. **No runtime bridge** between Rust pipeline and HEP domain knowledge — `MolConfig` has no `domain`, `templates_dir`, or `analysis_type` field
 4. **No liveness monitoring** during stage execution — heartbeat only written after completion
 5. **260+ lines of hardcoded domain detection** in `executor.rs` — not configurable
@@ -25,7 +26,8 @@ Phase 1: Foundation (this spec)
   ├── MolConfig gains domain/templates_dir/analysis_type
   ├── StagePromptEngine loads templates from disk
   ├── 26 stage template files created in hep/templates/stages/
-  ├── All 25 system prompts + 26 fallbacks extracted to templates
+  ├── All 24 system prompts + 24 fallbacks extracted to templates
+  ├── discussion.rs hardcoded format!() left as-is (convert to LLM in Phase 2)
   ├── llm_generate → Result<String>, failure = honest failure
   ├── Runner periodic heartbeat during stage execution
   └── graceful_degradation semantic update
@@ -63,6 +65,8 @@ pub struct MolConfig {
 
 The runner populates these from the project config at startup. If `templates_dir` is None, the engine looks for `hep/templates/stages/` relative to the working directory.
 
+**Default impl**: `domain` defaults to `"hep"`, `analysis_type` defaults to `None`, `templates_dir` defaults to `None`.
+
 ### 2. StagePromptEngine
 
 New struct in `executor.rs` that loads and renders stage templates:
@@ -97,11 +101,17 @@ pub struct StageContext {
 }
 ```
 
-All stage executor functions already receive `&StageContext`, so no signature changes needed.
+All stage executor functions already receive `&StageContext`, so no executor function signatures change. However, all `StageContext` construction sites must be updated to include the new field:
+
+- `runner.rs` main pipeline loop (~line 248)
+- `runner.rs` iterative pipeline (~line 480)
+- `runner.rs` test helper `default_config()`
+- `discussion.rs` test helper
+- All phase test `make_ctx()` helpers (phase1–5.rs)
 
 ### 3. Template Files
 
-Create `hep/templates/stages/` with 27 files (26 stages + 1 discussion):
+Create `hep/templates/stages/` with 26 files (one per pipeline stage, excluding Discussion):
 
 ```
 hep/templates/stages/
@@ -131,8 +141,9 @@ hep/templates/stages/
   knowledge_archive.md
   export_publish.md
   citation_verify.md
-  discussion.md
 ```
+
+**Stage-to-template name mapping**: `Stage::name()` returns uppercase (e.g., `"TOPIC_INIT"`). The engine converts to lowercase + `.md`: `stage.name().to_ascii_lowercase() + ".md"`. Discussion stage has no template — it keeps its existing hardcoded `format!()` behavior in Phase 1.
 
 Template content is migrated from the existing Rust source, enriched with HEP domain knowledge. Example:
 
@@ -191,7 +202,7 @@ When `ctx.llm` is `None` (no LLM provider configured), returns `Err(anyhow!("No 
 
 ### 6. Stage Executor Refactoring
 
-All 26 stage executors (+ discussion) follow the same new pattern:
+All 24 LLM-calling stage executors (in phase1–5.rs) follow the same new pattern. Discussion.rs is excluded — it has no `llm_generate` call and will be converted to LLM-driven in Phase 2.
 
 ```rust
 pub async fn execute_topic_init(stage: Stage, ctx: &StageContext) -> StageResult {
@@ -231,9 +242,9 @@ pub async fn execute_topic_init(stage: Stage, ctx: &StageContext) -> StageResult
 | `phase2.rs` | 5 | 5 | 5 |
 | `phase3.rs` | 7 | 7 | 7 |
 | `phase4.rs` | 3 | 3 | 3 |
-| `phase5.rs` | 7 | 7 | 7 |
-| `discussion.rs` | 1 | 1 | 1 |
-| **Total** | **25** | **25** | **25** |
+| `phase5.rs` | 7 | 7 | 7 (note: 1 is conditional on `!prior_paper.is_empty()`) |
+| `discussion.rs` | 0 | 0 | 0 (hardcoded `format!()`, no LLM call) |
+| **Total** | **24** | **24** | **24** |
 
 ### 7. graceful_degradation Semantic Update
 
@@ -243,6 +254,8 @@ With fallbacks removed, `graceful_degradation` mode changes meaning:
 - **New**: "Log the failure, skip the failed stage, continue pipeline with available artifacts"
 
 This becomes functionally equivalent to `skip_noncritical` but applies to ALL stages, not just noncritical ones. Update the doc comment and CLI help text to reflect this. The `--no-graceful-degradation` flag remains: when set, any stage failure aborts the pipeline.
+
+**Dead code to remove**: The `"degraded"` decision string, its check in `PipelineSummary::build`, and the DEGRADED log branch in the runner loop become unreachable once fallbacks are removed. Remove them.
 
 ### 8. Runner Heartbeat Monitoring
 
@@ -263,7 +276,7 @@ let heartbeat_handle = tokio::spawn({
             let _ = write_heartbeat(
                 &run_dir, stage, &run_id,
                 "running", stage_start.elapsed().as_secs_f64(),
-            );
+            ).await;
         }
     }
 });
@@ -273,7 +286,7 @@ heartbeat_handle.abort();
 
 // Write final heartbeat with completion status
 let status = if result.status == StageStatus::Done { "completed" } else { "failed" };
-let _ = write_heartbeat(&run_dir, stage, &run_id, status, stage_start.elapsed().as_secs_f64());
+let _ = write_heartbeat(&run_dir, stage, &run_id, status, stage_start.elapsed().as_secs_f64()).await;
 ```
 
 #### 8.2 Enhanced HeartbeatRecord
@@ -312,14 +325,14 @@ The heartbeat is for external monitoring. The runner does NOT enforce any timeou
 
 | File | Change |
 |------|--------|
-| `hep/templates/stages/*.md` | **NEW**: 27 Tera template files (26 stages + discussion) |
+| `hep/templates/stages/*.md` | **NEW**: 26 Tera template files (26 stages, no discussion) |
 | `crates/mol-pipeline/src/executor.rs` | Add `StagePromptEngine`, extend `MolConfig`, change `llm_generate` → `Result<String>` |
 | `crates/mol-pipeline/src/stages_impl/phase1.rs` | Remove 2 hardcoded prompts + 2 fallbacks, use template engine |
 | `crates/mol-pipeline/src/stages_impl/phase2.rs` | Remove 5 hardcoded prompts + 5 fallbacks |
 | `crates/mol-pipeline/src/stages_impl/phase3.rs` | Remove 7 hardcoded prompts + 7 fallbacks |
 | `crates/mol-pipeline/src/stages_impl/phase4.rs` | Remove 3 hardcoded prompts + 3 fallbacks |
 | `crates/mol-pipeline/src/stages_impl/phase5.rs` | Remove 7 hardcoded prompts + 7 fallbacks |
-| `crates/mol-pipeline/src/stages_impl/discussion.rs` | Remove 1 hardcoded prompt + 1 fallback |
+| `crates/mol-pipeline/src/stages_impl/discussion.rs` | No prompt changes (hardcoded `format!()` stays; convert to LLM in Phase 2) |
 | `crates/mol-pipeline/src/runner.rs` | Periodic heartbeat spawn/cancel, construct StagePromptEngine |
 | `crates/mol-pipeline/src/checkpoint.rs` | Extend `HeartbeatRecord`, update `write_heartbeat` signature |
 | `crates/mol-common/src/prompts.rs` | No changes needed (existing PromptEngine sufficient) |
@@ -328,11 +341,11 @@ The heartbeat is for external monitoring. The runner does NOT enforce any timeou
 
 ## Testing Strategy
 
-1. **Template rendering tests**: New test module verifying all 27 templates render without Tera errors given mock variables
-2. **StagePromptEngine unit tests**: `render_prompt()` returns valid (system, user) tuple for all 26 stages; missing template returns error
+1. **Template rendering tests**: New test module verifying all 26 templates render without Tera errors given mock variables
+2. **StagePromptEngine unit tests**: `render_prompt()` returns valid (system, user) tuple for all 26 stages; missing template returns error; Discussion stage returns error (no template)
 3. **llm_generate error propagation**: Test that `Err` propagates correctly to stage executor, producing `StageResult::failure`
 4. **Heartbeat tests**: Verify `write_heartbeat` writes correct JSON with all new fields
-5. **Existing tests update**: Stage executor tests that relied on fallback behavior → mock LLM provider returning domain-relevant content. Estimate ~20-30 tests affected (those calling stage executors without LLM configured)
+5. **Existing tests update**: Stage executor tests that relied on fallback behavior → mock LLM provider returning domain-relevant content. Estimate ~20-30 tests affected. Nature of breakage: `llm_generate` now returns `Err` instead of empty string when `llm: None`, so tests must either provide a mock LLM or expect `StageResult::failure`
 6. **End-to-end**: Full 26-stage pipeline with LLM provider, verify no fallback warnings in output
 
 ## Risk Mitigation
@@ -343,6 +356,7 @@ The heartbeat is for external monitoring. The runner does NOT enforce any timeou
 
 ## Phase 2 Scope (Future)
 
+- Convert `discussion.rs` from hardcoded `format!()` to LLM-driven template (new LLM integration, not mechanical extraction)
 - Wire 18 HEP agent definitions (`hep/agents/`) as system prompt sources, replacing the generic role descriptions in stage templates
 - Auto-inject `hep/conventions/{analysis_type}.md` into `{{ conventions }}` variable
 - Integrate blinding protocol (`hep/methodology/04-blinding.md`) into runner gate mechanism at Phase 4 transitions
