@@ -1,0 +1,5 @@
+## Generic stage contracts — fallback layer
+## Domain-specific layers can override individual stage contracts.
+## These match the hardcoded defaults in mol-pipeline/src/contracts.rs.
+
+overrides: {}

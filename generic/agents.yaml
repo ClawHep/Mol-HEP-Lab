@@ -1,0 +1,30 @@
+## Generic agent mappings — fallback layer
+## Domain-specific layers override these with specialized agents.
+
+stage_agents:
+  TOPIC_INIT: researcher
+  PROBLEM_DECOMPOSE: researcher
+  SEARCH_STRATEGY: researcher
+  LITERATURE_COLLECT: researcher
+  LITERATURE_SCREEN: reviewer
+  KNOWLEDGE_EXTRACT: researcher
+  SYNTHESIS: researcher
+  HYPOTHESIS_GEN: researcher
+  EXPERIMENT_DESIGN: researcher
+  CODEBASE_SEARCH: researcher
+  CODE_GENERATION: researcher
+  SANITY_CHECK: reviewer
+  RESOURCE_PLANNING: researcher
+  EXPERIMENT_RUN: researcher
+  ITERATIVE_REFINE: researcher
+  RESULT_ANALYSIS: analyst
+  RESEARCH_DECISION: reviewer
+  KNOWLEDGE_SUMMARY: researcher
+  PAPER_OUTLINE: researcher
+  PAPER_DRAFT: researcher
+  PEER_REVIEW: reviewer
+  PAPER_REVISION: researcher
+  QUALITY_GATE: reviewer
+  KNOWLEDGE_ARCHIVE: researcher
+  EXPORT_PUBLISH: researcher
+  CITATION_VERIFY: reviewer

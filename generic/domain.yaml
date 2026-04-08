@@ -1,0 +1,39 @@
+## Generic domain profile — fallback layer
+## Used when no domain-specific layer provides domain.yaml
+
+domain: generic
+domain_id: generic
+display_name: "Generic Computational Research"
+paradigm: comparison
+gpu_required: false
+
+docker_image: "researchmol/sandbox-generic:latest"
+
+default_metrics:
+  - name: primary_metric
+    metric_type: lower_better
+    description: "Primary experiment metric"
+    unit: ""
+
+benchmarks: []
+
+pip_packages:
+  - numpy
+  - scipy
+  - matplotlib
+  - pandas
+  - scikit-learn
+
+suggested_frameworks:
+  - numpy
+  - scipy
+
+experiment_templates:
+  - "Implement all methods from the experiment plan."
+  - "Use the same test problems / data for all methods."
+  - "Report results as JSON to results.json."
+
+condition_terminology:
+  condition: "method"
+  baseline: "reference"
+  metric: "primary metric"
