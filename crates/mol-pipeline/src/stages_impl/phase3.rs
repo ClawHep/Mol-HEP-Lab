@@ -1341,6 +1341,7 @@ mod tests {
             prior_artifacts: HashMap::new(),
             auto_approve_gates: auto_approve,
             llm: None,
+            prompt_engine: None,
         }
     }
 

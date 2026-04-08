@@ -474,6 +474,7 @@ mod tests {
             prior_artifacts: HashMap::new(),
             auto_approve_gates: true,
             llm: None,
+            prompt_engine: None,
         }
     }
 

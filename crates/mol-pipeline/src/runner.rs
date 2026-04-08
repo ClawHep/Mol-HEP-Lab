@@ -252,6 +252,7 @@ pub async fn execute_pipeline_with_llm(
             prior_artifacts: artifact_registry.clone(),
             auto_approve_gates: pipeline_config.auto_approve,
             llm: llm.clone(),
+            prompt_engine: None, // TODO: wire in Task 7
         };
 
         // Execute the stage.
@@ -484,6 +485,7 @@ pub async fn execute_iterative_pipeline(
                 prior_artifacts: iter_artifacts.clone(),
                 auto_approve_gates: pipeline_config.auto_approve,
                 llm: llm.clone(),
+                prompt_engine: None, // TODO: wire in Task 7
             };
 
             let result = match execute_stage(stage, &context).await {

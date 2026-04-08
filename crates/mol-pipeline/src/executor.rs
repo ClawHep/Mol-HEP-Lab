@@ -180,8 +180,10 @@ pub struct StageContext {
     pub prior_artifacts: HashMap<String, PathBuf>,
     /// Whether gate stages should be auto-approved without HITL interaction.
     pub auto_approve_gates: bool,
-    /// LLM provider — `None` means stages use fallback templates.
+    /// LLM provider — `None` means stages will fail with an error.
     pub llm: Option<Arc<dyn mol_llm::LlmProvider>>,
+    /// Stage prompt template engine — loaded once at pipeline startup.
+    pub prompt_engine: Option<Arc<StagePromptEngine>>,
 }
 
 impl std::fmt::Debug for StageContext {
@@ -201,6 +203,48 @@ impl StageContext {
     /// Return the output directory for `stage` within this run.
     pub fn stage_dir(&self, stage: Stage) -> PathBuf {
         self.run_dir.join(format!("stage-{:02}", stage.as_i32()))
+    }
+
+    /// Build the template variable map for rendering stage prompts.
+    ///
+    /// Populates common variables (topic, domain, analysis_type, timestamp)
+    /// and reads relevant prior artifacts into the map.
+    pub fn template_vars(&self) -> HashMap<String, String> {
+        let mut vars = HashMap::new();
+        vars.insert("topic".to_owned(), self.config.topic.clone());
+        vars.insert("domain".to_owned(), self.config.domain.clone());
+        vars.insert(
+            "analysis_type".to_owned(),
+            self.config.analysis_type.clone().unwrap_or_else(|| "general".to_owned()),
+        );
+        vars.insert("timestamp".to_owned(), utcnow_iso());
+
+        // Read common prior artifacts if they exist.
+        let artifact_files = [
+            ("goal", "goal.md"),
+            ("hypotheses", "hypotheses.md"),
+            ("synthesis_report", "synthesis_report.md"),
+            ("experiment_plan", "exp_plan.yaml"),
+            ("analysis_report", "analysis_report.md"),
+            ("decision_record", "decision_record.json"),
+            ("knowledge_summary", "knowledge_summary.json"),
+            ("paper_outline", "paper_outline.md"),
+            ("paper_draft", "paper_draft.md"),
+            ("paper_revised", "paper_revised.md"),
+            ("review_comments", "review_comments.json"),
+            ("problem_tree", "problem_tree.md"),
+            ("search_queries", "search_plan.yaml"),
+            ("knowledge_cards", "knowledge_cards.json"),
+            ("sanity_report", "sanity_report.json"),
+            ("resource_plan", "resource_plan.json"),
+        ];
+        for (key, filename) in artifact_files {
+            if let Some(content) = read_prior_artifact(&self.run_dir, filename) {
+                vars.insert(key.to_owned(), content);
+            }
+        }
+
+        vars
     }
 }
 
@@ -1377,6 +1421,7 @@ mod tests {
             prior_artifacts: HashMap::new(),
             auto_approve_gates: false,
             llm: None,
+            prompt_engine: None,
         }
     }
 
