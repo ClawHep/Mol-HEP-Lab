@@ -266,7 +266,7 @@ pub fn validate_outputs(stage: Stage, produced: &[String]) -> Result<()> {
         .expected_outputs
         .iter()
         .copied()
-        .filter(|&exp| !produced.iter().any(|p| p == exp))
+        .filter(|&exp| !artifact_satisfied(exp, produced))
         .collect();
 
     if missing.is_empty() {

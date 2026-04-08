@@ -75,7 +75,8 @@ fn check_tool(name: &str) -> CheckResult {
     }
 }
 
-fn check_config(config_path: &PathBuf) -> Vec<CheckResult> {
+/// Returns (check results, experiment_mode string).
+fn check_config(config_path: &PathBuf) -> (Vec<CheckResult>, String) {
     let mut results = Vec::new();
 
     let text = match std::fs::read_to_string(config_path) {
@@ -86,7 +87,7 @@ fn check_config(config_path: &PathBuf) -> Vec<CheckResult> {
                 status: CheckStatus::Fail,
                 message: format!("cannot read config: {e}"),
             });
-            return results;
+            return (results, String::new());
         }
     };
 
@@ -104,7 +105,7 @@ fn check_config(config_path: &PathBuf) -> Vec<CheckResult> {
                 status: CheckStatus::Fail,
                 message: format!("YAML parse error: {e}"),
             });
-            return results;
+            return (results, String::new());
         }
     };
 
@@ -149,55 +150,109 @@ fn check_config(config_path: &PathBuf) -> Vec<CheckResult> {
         }
     }
 
-    results
+    let experiment_mode = value["experiment"]["mode"].as_str().unwrap_or("sandbox").to_string();
+    (results, experiment_mode)
 }
 
-fn check_docker_runtime() -> CheckResult {
+fn check_docker_runtime(experiment_mode: &str) -> Vec<CheckResult> {
+    // Python parity: only check Docker when experiment.mode == "docker"
+    if experiment_mode != "docker" {
+        return vec![CheckResult {
+            name: "docker_runtime".to_string(),
+            status: CheckStatus::Pass,
+            message: format!("skipped (experiment.mode = \"{experiment_mode}\", not \"docker\")"),
+        }];
+    }
+    let mut results = Vec::new();
     match std::process::Command::new("docker").args(["info", "--format", "{{.ServerVersion}}"]).output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            CheckResult {
+            results.push(CheckResult {
                 name: "docker_runtime".to_string(),
                 status: CheckStatus::Pass,
                 message: format!("Docker daemon running (v{version})"),
+            });
+            // Python parity: also check if configured image exists locally
+            let image_check = std::process::Command::new("docker")
+                .args(["image", "inspect", "molheplab/sandbox-python:latest", "--format", "{{.Id}}"])
+                .output();
+            match image_check {
+                Ok(o) if o.status.success() => {
+                    results.push(CheckResult {
+                        name: "docker_image".to_string(),
+                        status: CheckStatus::Pass,
+                        message: "sandbox image available locally".to_string(),
+                    });
+                }
+                _ => {
+                    results.push(CheckResult {
+                        name: "docker_image".to_string(),
+                        status: CheckStatus::Warn,
+                        message: "sandbox image not found locally (will be pulled on first run)".to_string(),
+                    });
+                }
             }
         }
-        Ok(_) => CheckResult {
-            name: "docker_runtime".to_string(),
-            status: CheckStatus::Warn,
-            message: "Docker installed but daemon not running".to_string(),
-        },
-        Err(_) => CheckResult {
-            name: "docker_runtime".to_string(),
-            status: CheckStatus::Warn,
-            message: "Docker not installed".to_string(),
-        },
+        Ok(_) => {
+            results.push(CheckResult {
+                name: "docker_runtime".to_string(),
+                status: CheckStatus::Fail,
+                message: "Docker installed but daemon not running (required for docker mode)".to_string(),
+            });
+        }
+        Err(_) => {
+            results.push(CheckResult {
+                name: "docker_runtime".to_string(),
+                status: CheckStatus::Fail,
+                message: "Docker not installed (required for docker mode)".to_string(),
+            });
+        }
     }
+    results
 }
 
-fn check_python_sandbox() -> CheckResult {
+fn check_python_sandbox() -> Vec<CheckResult> {
+    let mut results = Vec::new();
     match std::process::Command::new("python3").args(["--version"]).output() {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            // Check if numpy/torch are importable
+            // Check if numpy is importable
             let has_numpy = std::process::Command::new("python3")
                 .args(["-c", "import numpy"])
                 .output()
                 .map(|o| o.status.success())
                 .unwrap_or(false);
             let extras = if has_numpy { " (numpy OK)" } else { " (numpy missing)" };
-            CheckResult {
+            results.push(CheckResult {
                 name: "python_sandbox".to_string(),
                 status: CheckStatus::Pass,
                 message: format!("{version}{extras}"),
-            }
+            });
+            // Python parity: check matplotlib importable
+            let has_matplotlib = std::process::Command::new("python3")
+                .args(["-c", "import matplotlib"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            results.push(CheckResult {
+                name: "matplotlib".to_string(),
+                status: if has_matplotlib { CheckStatus::Pass } else { CheckStatus::Warn },
+                message: if has_matplotlib {
+                    "matplotlib importable".to_string()
+                } else {
+                    "matplotlib not installed (pip install matplotlib)".to_string()
+                },
+            });
         }
-        _ => CheckResult {
-            name: "python_sandbox".to_string(),
-            status: CheckStatus::Warn,
-            message: "python3 not available".to_string(),
-        },
+        _ => {
+            results.push(CheckResult {
+                name: "python_sandbox".to_string(),
+                status: CheckStatus::Warn,
+                message: "python3 not available".to_string(),
+            });
+        }
     }
+    results
 }
 
 pub async fn execute(args: DoctorArgs) -> Result<()> {
@@ -206,13 +261,24 @@ pub async fn execute(args: DoctorArgs) -> Result<()> {
     let mut checks: Vec<CheckResult> = Vec::new();
 
     // Config checks
-    checks.extend(check_config(&config_path));
+    let (config_checks, experiment_mode) = check_config(&config_path);
+    checks.extend(config_checks);
 
     // Tool checks
     checks.push(check_tool("python3"));
     checks.push(check_tool("docker"));
-    checks.push(check_tool("pdflatex"));
     checks.push(check_tool("npm"));
+
+    // pdflatex: Python doesn't health-check this (only checks at compile time).
+    // Report as informational only — not a warning.
+    if which::which("pdflatex").is_ok() {
+        checks.push(CheckResult {
+            name: "pdflatex".to_string(),
+            status: CheckStatus::Pass,
+            message: "`pdflatex` found on PATH".to_string(),
+        });
+    }
+    // If pdflatex is absent, don't report it at all (matches Python behavior)
 
     // CLI LLM tool checks (any one of these enables CLI-based LLM mode)
     let cli_llm_tools = ["claude", "codex", "opencode", "acpx"];
@@ -238,11 +304,11 @@ pub async fn execute(args: DoctorArgs) -> Result<()> {
         message: format!("GPU: {} ({})", hw.gpu_name, hw.tier),
     });
 
-    // Docker runtime check
-    checks.push(check_docker_runtime());
+    // Docker runtime check (conditional on experiment.mode, matching Python)
+    checks.extend(check_docker_runtime(&experiment_mode));
 
-    // Python sandbox check
-    checks.push(check_python_sandbox());
+    // Python sandbox check (+ matplotlib, matching Python health.py)
+    checks.extend(check_python_sandbox());
 
     // Determine overall status
     let overall = if checks.iter().any(|c| matches!(c.status, CheckStatus::Fail)) {

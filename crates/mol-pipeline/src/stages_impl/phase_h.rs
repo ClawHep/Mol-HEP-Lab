@@ -40,7 +40,7 @@ pub async fn execute_quality_gate(stage: Stage, ctx: &StageContext) -> StageResu
              checks (array with name/passed/points/earned), improvement_suggestions (array), \
              verdict ('PASS' or 'FAIL — revision required').",
             topic,
-            if paper_for_llm.is_empty() { "(no paper available)" } else { &paper_for_llm[..paper_for_llm.len().min(2000)] }
+            if paper_for_llm.is_empty() { "(no paper available)" } else { &paper_for_llm[..paper_for_llm.len().min(20000)] }
         ),
         true,
     )
@@ -290,7 +290,7 @@ pub async fn execute_export_publish(stage: Stage, ctx: &StageContext) -> StageRe
                  Remove all revision notes and editorial marks. Clean up formatting. \
                  Ensure the paper flows coherently.\n\nPaper:\n{}",
                 topic,
-                &prior_paper[..prior_paper.len().min(4000)]
+                &prior_paper[..prior_paper.len().min(30000)]
             ),
             false,
         )
@@ -455,7 +455,7 @@ pub async fn execute_citation_verify(stage: Stage, ctx: &StageContext) -> StageR
              total_citations (int), verified (int), unverified (int), warnings (array), \
              citations (array with citation_key/type/status/note), overall_status ('pass'/'warn'/'fail'), notes.",
             topic,
-            if paper_text.is_empty() { "(no paper found)" } else { &paper_text[..paper_text.len().min(3000)] }
+            if paper_text.is_empty() { "(no paper found)" } else { &paper_text[..paper_text.len().min(20000)] }
         ),
         true,
     )

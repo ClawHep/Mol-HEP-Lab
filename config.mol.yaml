@@ -1,0 +1,52 @@
+project:
+  name: "hep-jet-attention"
+  mode: "full-auto"
+
+research:
+  topic: "Physics-informed transformer attention mechanisms for jet classification in high-energy particle physics: comparing linear attention, pile-up robustness, attention head specialization, masked constituent prediction, and inducing point alignment"
+  domains:
+    - "deep-learning"
+    - "physics"
+  daily_paper_count: 5
+  quality_threshold: 3.0
+  reference_papers: []
+
+notifications:
+  channel: "console"
+  on_stage_start: true
+  on_gate_required: true
+
+knowledge_base:
+  backend: "markdown"
+  root: "docs/kb"
+
+llm:
+  provider: "acp"
+  acp:
+    agent: "claude"
+    session: "mol-hep-run"
+    timeout_sec: 600
+
+security:
+  hitl_required_stages: []
+
+experiment:
+  mode: "sandbox"
+  time_budget_sec: 3600
+  max_iterations: 5
+  metric_key: "primary_metric"
+  metric_direction: "minimize"
+  datasets_dir: ""
+  checkpoints_dir: ""
+  codebases_dir: ""
+  shared_results_dir: "runs/shared_results"
+  paper_length: "long"
+  sandbox:
+    python_path: "python3"
+  sanity_check_max_iterations: 100
+
+runtime:
+  timezone: "Asia/Shanghai"
+
+prompts:
+  custom_file: ""

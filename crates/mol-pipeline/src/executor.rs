@@ -148,13 +148,63 @@ pub async fn llm_generate(
             mol_llm::Message::user(user_prompt),
         ];
         match llm.chat(&messages, json_mode).await {
-            Ok(resp) => return resp.content,
+            Ok(resp) => {
+                // Clean LLM output: strip thinking traces, ACP noise,
+                // and markdown fences.
+                let cleaned = strip_llm_noise(&resp.content);
+                return strip_markdown_fences(&cleaned);
+            }
             Err(e) => {
                 tracing::warn!("LLM call failed, using fallback: {e}");
             }
         }
     }
     String::new()
+}
+
+/// Strip LLM noise: thinking traces, ACP session artifacts, etc.
+fn strip_llm_noise(s: &str) -> String {
+    let mut result = s.to_string();
+    // Strip ACP session noise (e.g. "Compacting...\n\nCompacting completed.\n\n")
+    for prefix in &["Compacting...", "Warming up...", "Resuming..."] {
+        if let Some(rest) = result.strip_prefix(prefix) {
+            // Find where the noise ends (usually a double newline after a status line)
+            if let Some(pos) = rest.find("\n\n") {
+                result = rest[pos + 2..].to_string();
+            }
+        }
+    }
+    // Strip [thinking] blocks at the start
+    let trimmed = result.trim_start();
+    if trimmed.starts_with("[thinking]") {
+        // Find end of thinking block: next [/thinking] or blank-line-then-content
+        if let Some(end) = trimmed.find("\n\n") {
+            let after = &trimmed[end + 2..];
+            // If there's still a [thinking] at start, strip recursively
+            result = after.to_string();
+        }
+    }
+    result
+}
+
+/// Strip markdown code fences (```json ... ``` or ``` ... ```) from LLM output.
+/// LLMs frequently wrap JSON responses in fences even when asked not to.
+fn strip_markdown_fences(s: &str) -> String {
+    let trimmed = s.trim();
+    // Match ```json\n...\n``` or ```\n...\n```
+    if let Some(rest) = trimmed.strip_prefix("```") {
+        // Skip optional language tag on the first line
+        let after_tag = if let Some(newline_pos) = rest.find('\n') {
+            &rest[newline_pos + 1..]
+        } else {
+            return trimmed.to_string();
+        };
+        // Strip trailing ```
+        if let Some(content) = after_tag.strip_suffix("```") {
+            return content.trim().to_string();
+        }
+    }
+    trimmed.to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -1418,5 +1468,23 @@ mod tests {
         let ts = utcnow_iso();
         assert!(ts.contains('T'));
         assert!(ts.ends_with('Z') || ts.contains('+'));
+    }
+
+    #[test]
+    fn strip_markdown_fences_json() {
+        let input = "```json\n{\"key\": \"value\"}\n```";
+        assert_eq!(strip_markdown_fences(input), r#"{"key": "value"}"#);
+    }
+
+    #[test]
+    fn strip_markdown_fences_no_lang() {
+        let input = "```\n{\"a\":1}\n```";
+        assert_eq!(strip_markdown_fences(input), r#"{"a":1}"#);
+    }
+
+    #[test]
+    fn strip_markdown_fences_plain() {
+        let input = r#"{"already":"clean"}"#;
+        assert_eq!(strip_markdown_fences(input), input);
     }
 }

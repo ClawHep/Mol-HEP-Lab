@@ -2460,9 +2460,19 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                     return messages;
                 }
                 let meta = read_json(&proj_dir.join("project_meta.json"));
-                let config_path = meta.as_ref().and_then(|m| m.get("config_path")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let mut config_path = meta.as_ref().and_then(|m| m.get("config_path")).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let topic = meta.as_ref().and_then(|m| m.get("topic")).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let mode = meta.as_ref().and_then(|m| m.get("mode")).and_then(|v| v.as_str()).unwrap_or("lab").to_string();
+                // Fallback: recover config_path from project_configs/ if meta lost it
+                if config_path.is_empty() {
+                    let fallback = PathBuf::from(&state.runs_base_dir)
+                        .join("project_configs")
+                        .join(format!("{project_id}.yaml"));
+                    if fallback.exists() {
+                        config_path = fallback.canonicalize().unwrap_or(fallback).to_string_lossy().into_owned();
+                        warn!("resume_project: recovered config_path from {config_path}");
+                    }
+                }
                 let disc_mode = *state.discussion_mode.read().unwrap_or_else(|e| e.into_inner());
                 state.fail_counts.remove(project_id);
                 messages.extend(submit_new_project(state, project_id, &config_path, &topic, &mode, disc_mode));
@@ -2501,9 +2511,19 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 }
                 messages.push(msg_log_sys(&format!("Project [{project_id}] progress cleared, restarting..."), "info"));
                 let meta = read_json(&proj_dir.join("project_meta.json"));
-                let config_path = meta.as_ref().and_then(|m| m.get("config_path")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let mut config_path = meta.as_ref().and_then(|m| m.get("config_path")).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let topic = meta.as_ref().and_then(|m| m.get("topic")).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let mode = meta.as_ref().and_then(|m| m.get("mode")).and_then(|v| v.as_str()).unwrap_or("lab").to_string();
+                // Fallback: recover config_path from project_configs/ if meta lost it
+                if config_path.is_empty() {
+                    let fallback = PathBuf::from(&state.runs_base_dir)
+                        .join("project_configs")
+                        .join(format!("{project_id}.yaml"));
+                    if fallback.exists() {
+                        config_path = fallback.canonicalize().unwrap_or(fallback).to_string_lossy().into_owned();
+                        warn!("restart_project: recovered config_path from {config_path}");
+                    }
+                }
                 let disc_mode = *state.discussion_mode.read().unwrap_or_else(|e| e.into_inner());
                 messages.extend(submit_new_project(state, project_id, &config_path, &topic, &mode, disc_mode));
                 messages.extend(schedule_idle_agents(state));
@@ -2786,12 +2806,52 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                     messages.push(msg_log_sys("无效的文件名", "error"));
                     return messages;
                 }
+                // Search for the file in the project's run directories
+                let proj_dir = state.projects_dir().join(&project_id);
+                let mut found_path: Option<String> = None;
+                if let Ok(rd) = std::fs::read_dir(&proj_dir) {
+                    // Check sub-run dirs (run-*/) and then stage dirs
+                    let mut dirs: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+                    dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+                    for entry in &dirs {
+                        let p = entry.path().join(&filename);
+                        if p.exists() {
+                            found_path = Some(format!("projects/{}/{}/{}", project_id, entry.file_name().to_string_lossy(), filename));
+                            break;
+                        }
+                        // Search in stage-* subdirectories (highest first)
+                        if let Ok(sub_rd) = std::fs::read_dir(entry.path()) {
+                            let mut sub_dirs: Vec<_> = sub_rd.filter_map(|e| e.ok()).collect();
+                            sub_dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+                            for sub in &sub_dirs {
+                                let sp = sub.path().join(&filename);
+                                if sp.exists() {
+                                    found_path = Some(format!("projects/{}/{}/{}/{}", project_id,
+                                        entry.file_name().to_string_lossy(),
+                                        sub.file_name().to_string_lossy(), filename));
+                                    break;
+                                }
+                            }
+                            if found_path.is_some() { break; }
+                        }
+                    }
+                }
+                // Also check project root directly
+                if found_path.is_none() {
+                    let direct = proj_dir.join(&filename);
+                    if direct.exists() {
+                        found_path = Some(format!("projects/{}/{}", project_id, filename));
+                    }
+                }
+                let url = found_path
+                    .map(|p| format!("/download/{}", p))
+                    .unwrap_or_else(|| format!("/download/projects/{}/{}", project_id, filename));
                 messages.push(serde_json::json!({
                     "type": "download_url",
                     "payload": {
                         "projectId": project_id,
                         "filename": filename,
-                        "url": format!("/download/{}/{}", project_id, filename),
+                        "url": url,
                     }
                 }));
             }

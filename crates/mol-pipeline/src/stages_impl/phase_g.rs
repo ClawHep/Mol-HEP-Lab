@@ -449,7 +449,7 @@ pub async fn execute_peer_review(stage: Stage, ctx: &StageContext) -> StageResul
              summary/strengths/weaknesses/questions/requested_changes), average_score, required_revisions.",
             paper_title,
             topic,
-            if draft.is_empty() { "(no draft available)" } else { &draft[..draft.len().min(2000)] }
+            if draft.is_empty() { "(no draft available)" } else { &draft[..draft.len().min(20000)] }
         ),
         true,
     )
@@ -596,15 +596,19 @@ pub async fn execute_paper_revision(stage: Stage, ctx: &StageContext) -> StageRe
     // Try LLM to generate revised paper; fall back to template if empty.
     let llm_revised = crate::executor::llm_generate(
         ctx,
-        "You are an academic writer revising a research paper based on peer review feedback.",
+        "You are an academic writer revising a research paper based on peer review feedback. \
+         CRITICAL: You must return the COMPLETE revised paper as a single markdown document. \
+         Do NOT return just a summary of changes — output the full paper text with revisions applied.",
         &format!(
             "Revise the following paper draft for topic '{}' based on the review comments.\n\n\
              Original draft:\n{}\n\nReview comments:\n{}\n\n\
-             Return the complete revised paper in markdown, addressing all major reviewer concerns. \
-             Mark significant changes with inline notes.",
+             IMPORTANT: Return the COMPLETE revised paper in markdown — every section from Abstract \
+             through References. Do NOT output just revision notes or a summary. The output must be \
+             the full paper with all revisions applied inline. Mark significant changes with brief \
+             inline notes like [REV: description].",
             topic,
-            if original_draft.is_empty() { "(no draft available)" } else { &original_draft[..original_draft.len().min(3000)] },
-            if _reviews.is_empty() { "(no review comments available)" } else { &_reviews[.._reviews.len().min(1000)] }
+            if original_draft.is_empty() { "(no draft available)" } else { &original_draft[..original_draft.len().min(30000)] },
+            if _reviews.is_empty() { "(no review comments available)" } else { &_reviews[.._reviews.len().min(3000)] }
         ),
         false,
     )

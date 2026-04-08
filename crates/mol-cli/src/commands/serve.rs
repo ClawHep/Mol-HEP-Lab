@@ -17,8 +17,8 @@ pub struct ServeArgs {
     #[arg(long, env = "FRONTEND_DIR", default_value = "frontend/dist")]
     pub frontend_dir: PathBuf,
 
-    /// Agent directory (backend/agent)
-    #[arg(long, default_value = "backend/agent")]
+    /// Agent directory (legacy, unused in Rust-native mode)
+    #[arg(long, default_value = ".")]
     pub agent_dir: PathBuf,
 
     /// Runs directory (backend/runs)

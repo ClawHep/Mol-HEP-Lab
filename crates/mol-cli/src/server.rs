@@ -39,14 +39,33 @@ async fn download_artifact(
     Path(rel_path): Path<String>,
     State(state): State<DownloadState>,
 ) -> Result<Response, StatusCode> {
-    let full_path = state.runs_dir.join(&rel_path);
-
-    // Prevent path traversal
-    let canonical = full_path.canonicalize().map_err(|_| StatusCode::NOT_FOUND)?;
     let runs_canonical = state
         .runs_dir
         .canonicalize()
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    // Try direct path first
+    let full_path = state.runs_dir.join(&rel_path);
+    let canonical = full_path.canonicalize().ok().filter(|c| c.starts_with(&runs_canonical));
+
+    // If direct path fails, search in projects/{id}/run-*/stage-*/ for the filename
+    let canonical = match canonical {
+        Some(c) => c,
+        None => {
+            // rel_path is typically "{projectId}/{filename}" from the frontend
+            let parts: Vec<&str> = rel_path.splitn(2, '/').collect();
+            if parts.len() == 2 {
+                let (project_id, filename) = (parts[0], parts[1]);
+                find_artifact_in_project(&state.runs_dir, project_id, filename)
+                    .and_then(|p| p.canonicalize().ok())
+                    .filter(|c| c.starts_with(&runs_canonical))
+                    .ok_or(StatusCode::NOT_FOUND)?
+            } else {
+                return Err(StatusCode::NOT_FOUND);
+            }
+        }
+    };
+
     if !canonical.starts_with(&runs_canonical) {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -76,6 +95,55 @@ async fn download_artifact(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(response)
+}
+
+/// Search for a file in a project's run directories.
+/// Looks in: projects/{id}/run-*/stage-*/{filename} (highest stage first)
+/// and projects/{id}/run-*/{filename}
+fn find_artifact_in_project(
+    runs_dir: &std::path::Path,
+    project_id: &str,
+    filename: &str,
+) -> Option<std::path::PathBuf> {
+    let proj_dir = runs_dir.join("projects").join(project_id);
+    if !proj_dir.exists() {
+        return None;
+    }
+    // Scan run-* subdirs (newest first)
+    let mut run_dirs: Vec<_> = std::fs::read_dir(&proj_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+        .collect();
+    run_dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+
+    for run_entry in &run_dirs {
+        // Check run dir itself
+        let direct = run_entry.path().join(filename);
+        if direct.exists() {
+            return Some(direct);
+        }
+        // Check stage-* dirs (highest number first)
+        let mut stage_dirs: Vec<_> = std::fs::read_dir(run_entry.path())
+            .ok()
+            .map(|rd| rd.filter_map(|e| e.ok())
+                .filter(|e| e.file_name().to_string_lossy().starts_with("stage-"))
+                .collect())
+            .unwrap_or_default();
+        stage_dirs.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        for stage_entry in &stage_dirs {
+            let p = stage_entry.path().join(filename);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    // Also check project dir directly
+    let direct = proj_dir.join(filename);
+    if direct.exists() {
+        return Some(direct);
+    }
+    None
 }
 
 // ── Entry point ─────────────────────────────────────────────────────────────
