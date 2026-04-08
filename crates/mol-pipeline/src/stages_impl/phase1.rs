@@ -406,6 +406,9 @@ mod tests {
             config: MolConfig {
                 topic: topic.to_owned(),
                 settings: HashMap::new(),
+                domain: "hep".to_owned(),
+                analysis_type: None,
+                templates_dir: None,
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: false,

@@ -27,6 +27,12 @@ pub struct MolConfig {
     pub topic: String,
     /// Free-form key-value settings forwarded to individual stage executors.
     pub settings: HashMap<String, String>,
+    /// Domain identifier (e.g. "hep", "ml", "physics").
+    pub domain: String,
+    /// Analysis type within the domain (e.g. "extraction", "search", "measurement").
+    pub analysis_type: Option<String>,
+    /// Path to stage template directory. Defaults to `hep/templates/stages/`.
+    pub templates_dir: Option<PathBuf>,
 }
 
 impl Default for MolConfig {
@@ -34,6 +40,9 @@ impl Default for MolConfig {
         Self {
             topic: String::new(),
             settings: HashMap::new(),
+            domain: "hep".to_owned(),
+            analysis_type: None,
+            templates_dir: None,
         }
     }
 }
