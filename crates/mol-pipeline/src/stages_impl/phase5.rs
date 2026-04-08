@@ -42,7 +42,7 @@ pub async fn execute_paper_outline(stage: Stage, ctx: &StageContext) -> StageRes
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_outline.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("paper_outline.md"), &llm_outline) {
             return StageResult::failure(stage, format!("write paper_outline.md: {e}"));
@@ -185,7 +185,7 @@ pub async fn execute_paper_draft(stage: Stage, ctx: &StageContext) -> StageResul
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_draft.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("paper_draft.md"), &llm_draft) {
             return StageResult::failure(stage, format!("write paper_draft.md: {e}"));
@@ -454,7 +454,7 @@ pub async fn execute_peer_review(stage: Stage, ctx: &StageContext) -> StageResul
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_reviews.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("review_comments.json"), &llm_reviews) {
             return StageResult::failure(stage, format!("write review_comments.json: {e}"));
@@ -613,7 +613,7 @@ pub async fn execute_paper_revision(stage: Stage, ctx: &StageContext) -> StageRe
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_revised.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("paper_revised.md"), &llm_revised) {
             return StageResult::failure(stage, format!("write paper_revised.md: {e}"));
@@ -790,7 +790,7 @@ pub async fn execute_quality_gate(stage: Stage, ctx: &StageContext) -> StageResu
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_quality.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("quality_report.json"), &llm_quality) {
             return StageResult::failure(stage, format!("write quality_report.json: {e}"));
@@ -1040,7 +1040,7 @@ pub async fn execute_export_publish(stage: Stage, ctx: &StageContext) -> StageRe
             ),
             false,
         )
-        .await;
+    .await.unwrap_or_default();
         if !llm_final.is_empty() {
             let paper_final_with_header = format!(
                 "<!-- Mol-HEP-Lab Final Paper Export | {} -->\n<!-- Run: {} | Topic: {} -->\n\n{}",
@@ -1205,7 +1205,7 @@ pub async fn execute_citation_verify(stage: Stage, ctx: &StageContext) -> StageR
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_verification.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("verification_report.json"), &llm_verification) {
             return StageResult::failure(stage, format!("write verification_report.json: {e}"));

@@ -248,34 +248,28 @@ impl StageContext {
     }
 }
 
-/// Call LLM with a system/user prompt pair, falling back to empty string if no
-/// provider is available or the call fails.
+/// Call LLM with a system/user prompt pair.
 ///
-/// Callers should check the return value: if empty, use fallback template output.
+/// Returns `Err` if no LLM provider is configured or if the call fails.
+/// Returns `Ok("")` only if the LLM returns an empty response.
 pub async fn llm_generate(
     ctx: &StageContext,
     system_prompt: &str,
     user_prompt: &str,
     json_mode: bool,
-) -> String {
-    if let Some(ref llm) = ctx.llm {
-        let messages = vec![
-            mol_llm::Message::system(system_prompt),
-            mol_llm::Message::user(user_prompt),
-        ];
-        match llm.chat(&messages, json_mode).await {
-            Ok(resp) => {
-                // Clean LLM output: strip thinking traces, ACP noise,
-                // and markdown fences.
-                let cleaned = strip_llm_noise(&resp.content);
-                return strip_markdown_fences(&cleaned);
-            }
-            Err(e) => {
-                tracing::warn!("LLM call failed, using fallback: {e}");
-            }
-        }
-    }
-    String::new()
+) -> Result<String> {
+    let llm = ctx.llm.as_ref()
+        .ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
+
+    let messages = vec![
+        mol_llm::Message::system(system_prompt),
+        mol_llm::Message::user(user_prompt),
+    ];
+    let resp = llm.chat(&messages, json_mode).await
+        .context("LLM chat call failed")?;
+
+    let cleaned = strip_llm_noise(&resp.content);
+    Ok(strip_markdown_fences(&cleaned))
 }
 
 /// Strip LLM noise: thinking traces, ACP session artifacts, etc.

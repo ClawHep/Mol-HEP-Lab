@@ -37,7 +37,7 @@ pub async fn execute_topic_init(stage: Stage, ctx: &StageContext) -> StageResult
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_goal.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("goal.md"), &llm_goal) {
             return StageResult::failure(stage, format!("write goal.md: {e}"));
@@ -187,7 +187,7 @@ pub async fn execute_problem_decompose(stage: Stage, ctx: &StageContext) -> Stag
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_tree.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("problem_tree.md"), &llm_tree) {
             return StageResult::failure(stage, format!("write problem_tree.md: {e}"));

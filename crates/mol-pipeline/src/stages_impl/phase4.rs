@@ -42,7 +42,7 @@ pub async fn execute_result_analysis(stage: Stage, ctx: &StageContext) -> StageR
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_analysis.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("analysis_report.md"), &llm_analysis) {
             return StageResult::failure(stage, format!("write analysis_report.md: {e}"));
@@ -260,7 +260,7 @@ pub async fn execute_research_decision(stage: Stage, ctx: &StageContext) -> Stag
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_decision.is_empty() {
         if let Err(e) = fs::write(
             stage_dir.join("decision_record.json"),
@@ -366,7 +366,7 @@ pub async fn execute_knowledge_summary(stage: Stage, ctx: &StageContext) -> Stag
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_summary.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("knowledge_summary.json"), &llm_summary) {
             return StageResult::failure(stage, format!("write knowledge_summary.json: {e}"));

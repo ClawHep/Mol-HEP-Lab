@@ -42,7 +42,7 @@ pub async fn execute_experiment_design(stage: Stage, ctx: &StageContext) -> Stag
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_plan.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("exp_plan.yaml"), &llm_plan) {
             return StageResult::failure(stage, format!("write exp_plan.yaml: {e}"));
@@ -204,7 +204,7 @@ pub async fn execute_codebase_search(stage: Stage, ctx: &StageContext) -> StageR
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_context.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("codebase_context.json"), &llm_context) {
             return StageResult::failure(stage, format!("write codebase_context.json: {e}"));
@@ -365,7 +365,7 @@ pub async fn execute_code_generation(stage: Stage, ctx: &StageContext) -> StageR
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_main_py.is_empty() {
         if let Err(e) = fs::write(experiment_dir.join("main.py"), &llm_main_py) {
             return StageResult::failure(stage, format!("write experiment/main.py: {e}"));
@@ -727,7 +727,7 @@ pub async fn execute_sanity_check(stage: Stage, ctx: &StageContext) -> StageResu
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_sanity.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("sanity_report.json"), &llm_sanity) {
             return StageResult::failure(stage, format!("write sanity_report.json: {e}"));
@@ -833,7 +833,7 @@ pub async fn execute_resource_planning(stage: Stage, ctx: &StageContext) -> Stag
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_resource.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("resource_plan.json"), &llm_resource) {
             return StageResult::failure(stage, format!("write resource_plan.json: {e}"));
@@ -982,7 +982,7 @@ pub async fn execute_experiment_run(stage: Stage, ctx: &StageContext) -> StageRe
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_report.is_empty() {
         let runs_dir = stage_dir.join("runs");
         if let Err(e) = fs::create_dir_all(&runs_dir) {
@@ -1143,7 +1143,7 @@ pub async fn execute_iterative_refine(stage: Stage, ctx: &StageContext) -> Stage
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_refinement.is_empty() {
         let final_dir = stage_dir.join("experiment_final");
         if let Err(e) = fs::create_dir_all(&final_dir) {

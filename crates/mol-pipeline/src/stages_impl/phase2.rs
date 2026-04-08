@@ -37,7 +37,7 @@ pub async fn execute_search_strategy(stage: Stage, ctx: &StageContext) -> StageR
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_plan.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("search_plan.yaml"), &llm_plan) {
             return StageResult::failure(stage, format!("write search_plan.yaml: {e}"));
@@ -249,7 +249,7 @@ pub async fn execute_literature_collect(stage: Stage, ctx: &StageContext) -> Sta
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_candidates.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("candidates.jsonl"), &llm_candidates) {
             return StageResult::failure(stage, format!("write candidates.jsonl: {e}"));
@@ -519,7 +519,7 @@ pub async fn execute_knowledge_extract(stage: Stage, ctx: &StageContext) -> Stag
         ),
         true,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_cards.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("knowledge_cards.json"), &llm_cards) {
             return StageResult::failure(stage, format!("write knowledge_cards.json: {e}"));
@@ -791,7 +791,7 @@ pub async fn execute_synthesis(stage: Stage, ctx: &StageContext) -> StageResult 
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_synthesis.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("synthesis_report.md"), &llm_synthesis) {
             return StageResult::failure(stage, format!("write synthesis_report.md: {e}"));
@@ -1003,7 +1003,7 @@ pub async fn execute_hypothesis_gen(stage: Stage, ctx: &StageContext) -> StageRe
         ),
         false,
     )
-    .await;
+    .await.unwrap_or_default();
     if !llm_hypotheses.is_empty() {
         if let Err(e) = fs::write(stage_dir.join("hypotheses.md"), &llm_hypotheses) {
             return StageResult::failure(stage, format!("write hypotheses.md: {e}"));
