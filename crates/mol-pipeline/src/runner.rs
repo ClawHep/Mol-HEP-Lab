@@ -260,6 +260,28 @@ pub async fn execute_pipeline_with_llm(
             }
         }
 
+        // Blinding gate: check before entering Phase 4 (ResultAnalysis)
+        if stage == Stage::ResultAnalysis {
+            match check_blinding_gate(run_dir, pipeline_config.auto_approve).await? {
+                BlindingStatus::Approved => {
+                    info!("{} Blinding gate passed — entering Phase 4", prefix);
+                }
+                BlindingStatus::Blocked => {
+                    info!("{} Blinding gate BLOCKED — pipeline paused", prefix);
+                    let result = StageResult {
+                        stage,
+                        status: StageStatus::BlockedApproval,
+                        artifacts: vec![],
+                        decision: "blocked_blinding".into(),
+                        error: Some("Blinding gate: approve unblinding before Phase 4".into()),
+                        elapsed_secs: 0.0,
+                    };
+                    results.push(result);
+                    break;
+                }
+            }
+        }
+
         // Build execution context.
         let context = StageContext {
             run_dir: run_dir.to_owned(),
@@ -441,6 +463,77 @@ pub async fn execute_pipeline_with_llm(
     write_pipeline_summary(run_dir, &summary).await;
 
     Ok(summary)
+}
+
+// ---------------------------------------------------------------------------
+// Blinding gate
+// ---------------------------------------------------------------------------
+
+/// Blinding gate status for Phase 3→4 transition.
+#[derive(Debug, PartialEq)]
+pub enum BlindingStatus {
+    Approved,
+    Blocked,
+}
+
+/// Check the blinding gate before entering Phase 4.
+///
+/// Reads `blinding_status.json` from the run directory. If the file does not
+/// exist, creates it with status `"blinded"`. Returns `Blocked` unless the
+/// status is already approved or `auto_approve` is true.
+pub async fn check_blinding_gate(
+    run_dir: &Path,
+    auto_approve: bool,
+) -> Result<BlindingStatus> {
+    let path = run_dir.join("blinding_status.json");
+
+    #[derive(Debug, Serialize, Deserialize)]
+    struct BlindingRecord {
+        status: String,
+        #[serde(default)]
+        phase: String,
+        #[serde(default)]
+        approved_at: String,
+    }
+
+    let record = if path.exists() {
+        let text = tokio::fs::read_to_string(&path).await?;
+        serde_json::from_str::<BlindingRecord>(&text).unwrap_or(BlindingRecord {
+            status: "blinded".into(),
+            phase: "4a_asimov".into(),
+            approved_at: String::new(),
+        })
+    } else {
+        let initial = BlindingRecord {
+            status: "blinded".into(),
+            phase: "4a_asimov".into(),
+            approved_at: String::new(),
+        };
+        let json = serde_json::to_string_pretty(&initial)?;
+        tokio::fs::write(&path, &json).await?;
+        initial
+    };
+
+    // Already approved (by human or prior auto-approve)
+    if record.status.starts_with("approved") {
+        return Ok(BlindingStatus::Approved);
+    }
+
+    // Auto-approve path
+    if auto_approve {
+        warn!("Blinding gate auto-approved — not recommended for production analyses");
+        let approved = BlindingRecord {
+            status: "approved_auto".into(),
+            phase: record.phase,
+            approved_at: Utc::now().to_rfc3339(),
+        };
+        let json = serde_json::to_string_pretty(&approved)?;
+        tokio::fs::write(&path, &json).await?;
+        return Ok(BlindingStatus::Approved);
+    }
+
+    info!("Blinding gate: analysis is blinded. Approve with /approve-unblinding before Phase 4 can proceed.");
+    Ok(BlindingStatus::Blocked)
 }
 
 // ---------------------------------------------------------------------------
@@ -812,5 +905,43 @@ mod tests {
 
         // graceful_degradation skips the failure.
         assert_eq!(summary.stages_skipped, 1);
+    }
+
+    #[tokio::test]
+    async fn blinding_gate_blocks_without_auto_approve() {
+        let dir = TempDir::new().unwrap();
+        let status = check_blinding_gate(dir.path(), false).await.unwrap();
+        assert_eq!(status, BlindingStatus::Blocked);
+
+        let content = tokio::fs::read_to_string(dir.path().join("blinding_status.json"))
+            .await
+            .unwrap();
+        assert!(content.contains("blinded"));
+    }
+
+    #[tokio::test]
+    async fn blinding_gate_auto_approves() {
+        let dir = TempDir::new().unwrap();
+        let status = check_blinding_gate(dir.path(), true).await.unwrap();
+        assert_eq!(status, BlindingStatus::Approved);
+
+        let content = tokio::fs::read_to_string(dir.path().join("blinding_status.json"))
+            .await
+            .unwrap();
+        assert!(content.contains("approved_auto"));
+    }
+
+    #[tokio::test]
+    async fn blinding_gate_respects_prior_approval() {
+        let dir = TempDir::new().unwrap();
+        tokio::fs::write(
+            dir.path().join("blinding_status.json"),
+            r#"{"status": "approved", "approved_at": "2026-04-08T00:00:00Z"}"#,
+        )
+        .await
+        .unwrap();
+
+        let status = check_blinding_gate(dir.path(), false).await.unwrap();
+        assert_eq!(status, BlindingStatus::Approved);
     }
 }
