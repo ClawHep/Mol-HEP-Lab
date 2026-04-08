@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { ProjectInfo, Artifact } from '../types';
+import { phaseStepLabel } from '../types';
 import { useLocale } from '../i18n';
 
 const STATUS_ICONS: Record<string, { color: string; icon: string }> = {
@@ -14,9 +15,11 @@ type SubmitMode = 'lab' | 'reproduce';
 type ReferencePdfUpload = { name: string; contentBase64: string };
 
 function stageName(n: number, t: (k: string) => string): string {
+  const label = phaseStepLabel(n as any);
   const key = `stage.${n}`;
   const translated = t(key);
-  return translated !== key ? translated : `S${n}`;
+  const name = translated !== key ? translated : '';
+  return label ? `${label} ${name}`.trim() : `S${n}`;
 }
 
 interface Props {

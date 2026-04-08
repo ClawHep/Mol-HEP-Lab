@@ -173,8 +173,8 @@ pub struct AcpConfig {
     pub acpx_command: String,
     #[serde(default = "defaults::session_name")]
     pub session_name: String,
-    #[serde(default = "defaults::six_hundred_u32")]
-    pub timeout_sec: u32,
+    #[serde(default)]
+    pub timeout_sec: u32,  // 0 = no timeout (default); runner monitors heartbeat for liveness
 }
 
 impl Default for AcpConfig {
@@ -184,7 +184,7 @@ impl Default for AcpConfig {
             cwd: defaults::dot(),
             acpx_command: String::new(),
             session_name: defaults::session_name(),
-            timeout_sec: defaults::six_hundred_u32(),
+            timeout_sec: 0,
         }
     }
 }

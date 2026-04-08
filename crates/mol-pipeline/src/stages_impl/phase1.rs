@@ -1,4 +1,4 @@
-//! Phase A: Research Scoping — TopicInit and ProblemDecompose stage executors.
+//! Phase 1: Strategy — TopicInit and ProblemDecompose stage executors.
 
 use crate::executor::{StageContext, StageResult, build_context_preamble, ContextOpts};
 use crate::stages::{Stage, StageStatus};

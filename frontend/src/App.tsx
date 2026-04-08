@@ -239,31 +239,31 @@ export default function App() {
   };
 
   // ── Memoized derived state ──
-  const ideaAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.IDEA), [state.agents]);
-  const expAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.EXPERIMENT), [state.agents]);
-  const codeAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.CODING), [state.agents]);
-  const execAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.EXECUTION), [state.agents]);
-  const writeAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.WRITING), [state.agents]);
+  const strategyAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.STRATEGY), [state.agents]);
+  const explorationAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.EXPLORATION), [state.agents]);
+  const processingAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.PROCESSING), [state.agents]);
+  const inferenceAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.INFERENCE), [state.agents]);
+  const documentationAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.DOCUMENTATION), [state.agents]);
   const agentMap = useMemo(() => ({
-    [AgentLayer.IDEA]: ideaAgents,
-    [AgentLayer.EXPERIMENT]: expAgents,
-    [AgentLayer.CODING]: codeAgents,
-    [AgentLayer.EXECUTION]: execAgents,
-    [AgentLayer.WRITING]: writeAgents,
-  }), [ideaAgents, expAgents, codeAgents, execAgents, writeAgents]);
+    [AgentLayer.STRATEGY]: strategyAgents,
+    [AgentLayer.EXPLORATION]: explorationAgents,
+    [AgentLayer.PROCESSING]: processingAgents,
+    [AgentLayer.INFERENCE]: inferenceAgents,
+    [AgentLayer.DOCUMENTATION]: documentationAgents,
+  }), [strategyAgents, explorationAgents, processingAgents, inferenceAgents, documentationAgents]);
 
-  const ideaLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.IDEA), [state.logs]);
-  const expLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.EXPERIMENT), [state.logs]);
-  const codeLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.CODING), [state.logs]);
-  const execLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.EXECUTION), [state.logs]);
-  const writeLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.WRITING), [state.logs]);
+  const strategyLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.STRATEGY), [state.logs]);
+  const explorationLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.EXPLORATION), [state.logs]);
+  const processingLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.PROCESSING), [state.logs]);
+  const inferenceLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.INFERENCE), [state.logs]);
+  const documentationLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.DOCUMENTATION), [state.logs]);
   const logMap = useMemo(() => ({
-    [AgentLayer.IDEA]: ideaLogs,
-    [AgentLayer.EXPERIMENT]: expLogs,
-    [AgentLayer.CODING]: codeLogs,
-    [AgentLayer.EXECUTION]: execLogs,
-    [AgentLayer.WRITING]: writeLogs,
-  }), [ideaLogs, expLogs, codeLogs, execLogs, writeLogs]);
+    [AgentLayer.STRATEGY]: strategyLogs,
+    [AgentLayer.EXPLORATION]: explorationLogs,
+    [AgentLayer.PROCESSING]: processingLogs,
+    [AgentLayer.INFERENCE]: inferenceLogs,
+    [AgentLayer.DOCUMENTATION]: documentationLogs,
+  }), [strategyLogs, explorationLogs, processingLogs, inferenceLogs, documentationLogs]);
 
   const artifactsByProject = useMemo(() => {
     const map: Record<string, Artifact[]> = {};
@@ -397,7 +397,7 @@ export default function App() {
                 );
               })}
             </div>
-            <div className={`feedback-loop ${agentMap[AgentLayer.EXECUTION].some((a) => a.status === 'done') ? 'active' : ''}`}>
+            <div className={`feedback-loop ${agentMap[AgentLayer.INFERENCE].some((a) => a.status === 'done') ? 'active' : ''}`}>
               <div className="fb-line fb-bottom" />
               <div className="fb-line fb-side"><div className="fb-pulse" /></div>
               <div className="fb-line fb-top" />

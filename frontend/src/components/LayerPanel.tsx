@@ -1,5 +1,5 @@
 import { memo, useState } from 'react';
-import { LAYER_META, STAGE_META } from '../types';
+import { LAYER_META, STAGE_META, phaseStepLabel } from '../types';
 import type { MolAgent, LogEntry, AgentLayer } from '../types';
 import { useLocale } from '../i18n';
 
@@ -58,9 +58,9 @@ export default memo(function LayerPanel({ layer, agents, logs, selectedProjectId
               ? agents.some((a) => a.stageProgress[DISCUSSION_STAGE] === 'completed')
               : agents.some((a) => a.stageProgress[s] === 'completed');
             const cls = anyRunning ? 'stage-running' : anyDone ? 'stage-done' : 'stage-idle';
-            const dn = sm.displayNumber;
             const sName = t(`stage.${s}`);
-            const label = isDisc ? `💬 ${sName}` : `S${dn} ${sName}`;
+            const psl = phaseStepLabel(s as any);
+            const label = isDisc ? `💬 ${sName}` : `${psl} ${sName}`;
             return (
               <span key={s} className={`stage-chip ${cls}${isDisc ? ' stage-discussion' : ''}`} title={sm.key}>
                 {label}
@@ -89,7 +89,7 @@ export default memo(function LayerPanel({ layer, agents, logs, selectedProjectId
                 <span className={`agent-stage-badge${agent.currentStage === DISCUSSION_STAGE ? ' discussion-badge' : ''}`}>
                   {agent.currentStage === DISCUSSION_STAGE
                     ? discussionLabel
-                    : `S${STAGE_META[agent.currentStage]?.displayNumber ?? agent.currentStage}`}
+                    : phaseStepLabel(agent.currentStage as any) || `S${agent.currentStage}`}
                 </span>
               )}
               {!agent.currentStage && (agent.status === 'waiting_discussion' || agent.status === 'discussing') && (
@@ -106,9 +106,9 @@ export default memo(function LayerPanel({ layer, agents, logs, selectedProjectId
                       : agent.status === 'waiting_discussion' ? 'waiting'
                       : agent.stageProgress[s] || 'pending')
                     : (agent.stageProgress[s] || 'pending');
-                  const dn2 = STAGE_META[s]?.displayNumber ?? s;
+                  const psl2 = phaseStepLabel(s as any);
                   const sName = t(`stage.${s}`);
-                  const label = isDisc ? `💬 S${dn2} ${sName}: ${status}` : `S${dn2}: ${status}`;
+                  const label = isDisc ? `💬 ${sName}: ${status}` : `${psl2}: ${status}`;
                   return (
                     <span key={s} className="stage-pip" title={label}>
                       {STAGE_ST[status] || '⬜'}
@@ -135,7 +135,7 @@ export default memo(function LayerPanel({ layer, agents, logs, selectedProjectId
                 {log.stage && <span className={`log-stage${log.stage === DISCUSSION_STAGE ? ' log-stage-discussion' : ''}`}>
                   {log.stage === DISCUSSION_STAGE
                     ? discussionLabel
-                    : `S${STAGE_META[log.stage]?.displayNumber ?? log.stage}`}
+                    : phaseStepLabel(log.stage as any) || `S${log.stage}`}
                 </span>}
                 <span className="log-msg">{log.message}</span>
               </div>

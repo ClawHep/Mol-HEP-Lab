@@ -228,7 +228,7 @@ pub async fn execute_pipeline_with_llm(
         }
 
         let stage_num = stage.as_i32();
-        let prefix = format!("[{}] Stage {:02}/{}", run_id, stage_num, total_stages);
+        let prefix = format!("[{}] Stage {:02}/{} ({})", run_id, stage_num, total_stages, stage.phase_label());
 
         info!("{} {} — running...", prefix, stage.name());
 

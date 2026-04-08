@@ -31,7 +31,7 @@ pub struct StageContract {
 /// use these as keys in the artifact registry.
 pub fn get_contract(stage: Stage) -> StageContract {
     match stage {
-        // Phase A: Research Scoping ----------------------------------------
+        // Phase 1: Strategy ------------------------------------------------
         Stage::TopicInit => StageContract {
             required_inputs: vec![],
             expected_outputs: vec!["topic_brief", "research_questions"],
@@ -41,7 +41,7 @@ pub fn get_contract(stage: Stage) -> StageContract {
             expected_outputs: vec!["problem_tree", "sub_problems"],
         },
 
-        // Phase B: Literature Discovery ------------------------------------
+        // Phase 2: Exploration ---------------------------------------------
         Stage::SearchStrategy => StageContract {
             required_inputs: vec!["problem_tree"],
             expected_outputs: vec!["search_queries", "source_list"],
@@ -59,7 +59,7 @@ pub fn get_contract(stage: Stage) -> StageContract {
             expected_outputs: vec!["knowledge_cards", "citation_map"],
         },
 
-        // Phase C: Knowledge Synthesis -------------------------------------
+        // Phase 2 (cont.): Synthesis + Hypothesis --------------------------
         Stage::Synthesis => StageContract {
             required_inputs: vec!["knowledge_cards"],
             expected_outputs: vec!["synthesis_report", "gap_analysis"],
@@ -69,7 +69,7 @@ pub fn get_contract(stage: Stage) -> StageContract {
             expected_outputs: vec!["hypotheses", "rationale"],
         },
 
-        // Phase D: Experiment Design ----------------------------------------
+        // Phase 3: Processing ----------------------------------------------
         Stage::ExperimentDesign => StageContract {
             required_inputs: vec!["hypotheses"],
             expected_outputs: vec!["experiment_plan", "success_criteria"],
@@ -91,7 +91,7 @@ pub fn get_contract(stage: Stage) -> StageContract {
             expected_outputs: vec!["resource_plan", "compute_estimate"],
         },
 
-        // Phase E: Experiment Execution ------------------------------------
+        // Phase 3 (cont.): Execution ---------------------------------------
         Stage::ExperimentRun => StageContract {
             required_inputs: vec!["experiment_code", "resource_plan"],
             expected_outputs: vec!["raw_results", "run_logs"],
@@ -101,7 +101,7 @@ pub fn get_contract(stage: Stage) -> StageContract {
             expected_outputs: vec!["refined_results", "refinement_log"],
         },
 
-        // Phase F: Analysis & Decision -------------------------------------
+        // Phase 4: Inference -----------------------------------------------
         Stage::ResultAnalysis => StageContract {
             required_inputs: vec!["refined_results"],
             expected_outputs: vec!["analysis_report", "figures"],
@@ -115,7 +115,7 @@ pub fn get_contract(stage: Stage) -> StageContract {
             expected_outputs: vec!["knowledge_summary"],
         },
 
-        // Phase G: Paper Writing -------------------------------------------
+        // Phase 5: Documentation -------------------------------------------
         Stage::PaperOutline => StageContract {
             required_inputs: vec!["knowledge_summary", "hypotheses"],
             expected_outputs: vec!["paper_outline"],
@@ -133,7 +133,7 @@ pub fn get_contract(stage: Stage) -> StageContract {
             expected_outputs: vec!["paper_revised", "revision_notes"],
         },
 
-        // Phase H: Finalization --------------------------------------------
+        // Phase 5 (cont.): Finalization ------------------------------------
         Stage::QualityGate => StageContract {
             required_inputs: vec!["paper_revised"],
             expected_outputs: vec!["quality_report"],
@@ -148,7 +148,7 @@ pub fn get_contract(stage: Stage) -> StageContract {
         },
         Stage::CitationVerify => StageContract {
             required_inputs: vec!["paper_final"],
-            expected_outputs: vec!["verification_report", "paper_final_verified"],
+            expected_outputs: vec!["verification_report"],
         },
 
         // Special ----------------------------------------------------------
@@ -174,26 +174,26 @@ fn artifact_satisfied(name: &str, available: &[String]) -> bool {
     // File-name aliases: logical contract name → acceptable file names
     // Derived from actual stage implementations in stages_impl/
     let aliases: &[(&str, &[&str])] = &[
-        // Phase A
+        // Phase 1: Strategy
         ("topic_brief", &["goal.md"]),
         ("research_questions", &["goal.md"]),
         ("problem_tree", &["problem_tree.md", "topic_evaluation.json"]),
         ("sub_problems", &["problem_tree.md"]),
-        // Phase B
+        // Phase 2: Exploration
         ("search_queries", &["search_plan.yaml", "queries.json", "sources.json"]),
         ("source_list", &["search_plan.yaml", "sources.json"]),
         ("raw_papers", &["candidates.jsonl"]),
         ("paper_metadata", &["candidates.jsonl"]),
-        ("screened_papers", &["candidates.jsonl"]),
-        ("exclusion_reasons", &["candidates.jsonl"]),
+        ("screened_papers", &["candidates.jsonl", "screened_papers.jsonl"]),
+        ("exclusion_reasons", &["candidates.jsonl", "exclusion_reasons.json"]),
         ("knowledge_cards", &["knowledge_cards.json"]),
         ("citation_map", &["citation_map.json"]),
-        // Phase C
+        // Phase 2 (cont.): Synthesis + Hypothesis
         ("synthesis_report", &["synthesis_report.md"]),
         ("gap_analysis", &["gap_analysis.json"]),
         ("hypotheses", &["hypotheses.md"]),
         ("rationale", &["hypotheses.md"]),
-        // Phase D
+        // Phase 3: Processing
         ("experiment_plan", &["exp_plan.yaml"]),
         ("success_criteria", &["exp_plan.yaml"]),
         ("codebase_context", &["codebase_context.json"]),
@@ -203,24 +203,29 @@ fn artifact_satisfied(name: &str, available: &[String]) -> bool {
         ("sanity_report", &["sanity_report.json"]),
         ("resource_plan", &["resource_plan.json"]),
         ("compute_estimate", &["schedule.json", "resource_plan.json"]),
-        // Phase E
+        // Phase 3 (cont.): Execution
         ("raw_results", &["runs/"]),
         ("run_logs", &["runs/"]),
         ("refined_results", &["refinement_log.json", "experiment_final/"]),
         ("refinement_log", &["refinement_log.json"]),
-        // Phase F
+        // Phase 4: Inference
         ("analysis_report", &["analysis_report.md", "experiment_summary.json"]),
         ("figures", &["analysis_report.md"]),
         ("decision_record", &["decision_record.json"]),
         ("knowledge_summary", &["knowledge_summary.json"]),
-        // Phase G
+        // Phase 5: Documentation
         ("paper_outline", &["paper_outline.md"]),
         ("paper_draft", &["paper_draft.md"]),
         ("review_comments", &["review_comments.json"]),
         ("paper_revised", &["paper_revised.md"]),
         ("revision_notes", &["revision_notes.md"]),
-        // Phase H
+        // Phase 5 (cont.): Finalization
         ("quality_report", &["quality_report.json"]),
+        ("archive_manifest", &["archive_manifest.json"]),
+        ("paper_final", &["paper_final.md"]),
+        ("paper_tex", &["paper.tex"]),
+        ("verification_report", &["verification_report.json"]),
+        ("paper_final_verified", &["paper_final_verified.md"]),
     ];
     for &(logical, file_names) in aliases {
         if name == logical {

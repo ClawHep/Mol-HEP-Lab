@@ -25,7 +25,7 @@ llm:
   acp:
     agent: "claude"
     session: "mol-hep-run"
-    timeout_sec: 600
+    timeout_sec: 0  # 0 = no timeout; runner monitors heartbeat/artifacts for liveness
 
 security:
   hitl_required_stages: []

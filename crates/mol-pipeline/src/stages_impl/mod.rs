@@ -1,22 +1,15 @@
-//! Stage implementations for all 26 pipeline stages.
+//! Stage implementations for all 26 pipeline steps across 5 phases.
 //!
-//! Each sub-module handles a phase of the research pipeline:
-//! - Phase A: Research scoping (TopicInit, ProblemDecompose)
-//! - Phase B: Literature discovery (SearchStrategy, LiteratureCollect, LiteratureScreen, KnowledgeExtract)
-//! - Phase C: Knowledge synthesis (Synthesis, HypothesisGen)
-//! - Phase D: Experiment design (ExperimentDesign, CodebaseSearch, CodeGeneration, SanityCheck, ResourcePlanning)
-//! - Phase E: Experiment execution (ExperimentRun, IterativeRefine)
-//! - Phase F: Analysis & decision (ResultAnalysis, ResearchDecision, KnowledgeSummary)
-//! - Phase G: Paper writing (PaperOutline, PaperDraft, PeerReview, PaperRevision)
-//! - Phase H: Finalization (QualityGate, KnowledgeArchive, ExportPublish, CitationVerify)
-//! - Discussion: Multi-agent discussion
+//! - Phase 1: Strategy (1.1 TopicInit, 1.2 ProblemDecompose)
+//! - Phase 2: Exploration (2.1–2.6: SearchStrategy → HypothesisGen)
+//! - Phase 3: Processing (3.1–3.7: ExperimentDesign → IterativeRefine)
+//! - Phase 4: Inference (4.1–4.3: ResultAnalysis → KnowledgeSummary)
+//! - Phase 5: Documentation (5.1–5.8: PaperOutline → CitationVerify)
+//! - Discussion: Multi-agent discussion (out-of-band)
 
 pub mod discussion;
-pub mod phase_a;
-pub mod phase_b;
-pub mod phase_c;
-pub mod phase_d;
-pub mod phase_e;
-pub mod phase_f;
-pub mod phase_g;
-pub mod phase_h;
+pub mod phase1;
+pub mod phase2;
+pub mod phase3;
+pub mod phase4;
+pub mod phase5;

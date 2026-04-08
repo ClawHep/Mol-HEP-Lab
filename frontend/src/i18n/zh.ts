@@ -28,7 +28,7 @@ const zh: Record<string, string> = {
   'project.mode.lab_desc': '多方向并行调研 → 跨领域讨论 → 统一假设',
   'project.mode.lab_independent_desc': '各方向独立调研出假设，更快但无共识',
   'project.mode.reproduce_desc': '单 Agent 全流程复现',
-  'project.mode.help': '🔬 Lab·讨论：多方向并行调研，S7 后跨方向讨论达成共识，生成统一假设。\n\n🔬 Lab·独立：多方向并行调研，各方向独立生成假设，速度更快但无跨方向共识。\n\n📄 论文复现：单 Agent 全流程复现目标论文的方法与实验。',
+  'project.mode.help': '🔬 Lab·讨论：多方向并行调研，Phase 2 综合 (2.5) 后跨方向讨论达成共识，生成统一假设。\n\n🔬 Lab·独立：多方向并行调研，各方向独立生成假设，速度更快但无跨方向共识。\n\n📄 论文复现：单 Agent 全流程复现目标论文的方法与实验。',
   'project.placeholder.lab': '研究具身智能中 video action model 的最新进展',
   'project.placeholder.reproduce': '复现 SwitchCraft (arXiv:2602.23956) 的注意力控制方法',
   'project.angles_placeholder': '研究方向 (分号隔开, 默认 CV, 如: CV; VLM; World Model)',
@@ -69,19 +69,19 @@ const zh: Record<string, string> = {
   'layer.log_title': '📋 层级日志',
   'layer.no_logs': '暂无日志',
 
-  // Layer names
-  'layer.idea.name': '第一层 · 调研与创意',
-  'layer.idea.desc': 'Phase A→C: 课题定义 → 文献调研 → 知识综合 → 假设生成',
-  'layer.experiment.name': '第二层 · 实验设计',
-  'layer.experiment.desc': 'Phase D: 实验方案设计',
-  'layer.coding.name': '第三层 · 代码与资源',
-  'layer.coding.desc': 'Phase D: 代码库检索 + 代码生成 + 资源规划',
-  'layer.execution.name': '第四层 · 执行与修正',
-  'layer.execution.desc': 'Phase E→F: 实验执行 → 迭代优化 → 结果分析 → 决策',
-  'layer.writing.name': '第五层 · 论文写作',
-  'layer.writing.desc': 'Phase G: 论文大纲 → 初稿 → 同行评审 → 修订',
+  // Phase/Layer names
+  'layer.strategy.name': 'P1 · 策略',
+  'layer.strategy.desc': '课题初始化与问题分解',
+  'layer.exploration.name': 'P2 · 探索',
+  'layer.exploration.desc': '文献调研、知识综合与假设生成',
+  'layer.processing.name': 'P3 · 处理',
+  'layer.processing.desc': '实验设计、代码生成与执行',
+  'layer.inference.name': 'P4 · 推断',
+  'layer.inference.desc': '结果分析、研究决策与知识归纳',
+  'layer.documentation.name': 'P5 · 文档',
+  'layer.documentation.desc': '论文写作、评审与发布',
 
-  // Stage names
+  // Stage names (Phase.Step)
   'stage.1': '课题初始化',
   'stage.2': '问题分解',
   'stage.3': '检索策略',
@@ -89,7 +89,6 @@ const zh: Record<string, string> = {
   'stage.5': '文献筛选',
   'stage.6': '知识提取',
   'stage.7': '知识综合',
-  'stage.100': '沟通讨论',
   'stage.8': '假设生成',
   'stage.9': '实验设计',
   'stage.10': '代码库检索',
@@ -105,6 +104,11 @@ const zh: Record<string, string> = {
   'stage.20': '论文初稿',
   'stage.21': '同行评审',
   'stage.22': '论文修订',
+  'stage.23': '质量门控',
+  'stage.24': '知识归档',
+  'stage.25': '导出发布',
+  'stage.26': '引用验证',
+  'stage.100': '沟通讨论',
 
   // Repo names
   'repo.knowledge.name': 'Idea 仓库',
@@ -140,11 +144,11 @@ const zh: Record<string, string> = {
   'queue.idle': '空闲',
   'queue.badge_running': '执行中',
   'queue.badge_waiting': '等待中',
-  'queue.stage_idea': '调研与创意',
-  'queue.stage_experiment': '实验设计',
-  'queue.stage_coding': '代码与资源',
-  'queue.stage_execution': '执行与修正',
-  'queue.stage_writing': '论文写作',
+  'queue.stage_strategy': '策略',
+  'queue.stage_exploration': '探索',
+  'queue.stage_processing': '处理',
+  'queue.stage_inference': '推断',
+  'queue.stage_documentation': '文档',
 
   // ResourceMonitor
   'resource.tag': '📈 资源',
@@ -170,8 +174,8 @@ const zh: Record<string, string> = {
   'discussion.on': '讨论模式',
   'discussion.off': '独立模式',
   'discussion.dialog_title': '讨论模式 vs 独立模式',
-  'discussion.dialog_body': '【讨论模式 (推荐)】\n多个方向的 Agent 各自完成 S1-S7 (调研→综述) 后暂停，等全部就绪后触发跨方向讨论，产出共识综述，再各自生成假设 (S8)，最终选出最佳方向进入下游实验。\n✅ 综合多视角，假设质量更高\n✅ 避免重复研究\n\n【独立模式】\n每个方向的 Agent 独立跑完 S1-S8，互不通信。各自生成假设后分别进入下游实验。\n⚡ 更快 (无需等待同步)\n⚠️ 方向可能重叠，没有共识整合\n\n注: 无论哪种模式，知识仓库和实验结果仓库始终在 Agent 间共享。',
-  'discussion.hint_on': 'S7 后跨方向讨论 → 共识假设',
+  'discussion.dialog_body': '【讨论模式 (推荐)】\n多个方向的 Agent 各自完成 Phase 2 步骤 2.1-2.5 (调研→综述) 后暂停，等全部就绪后触发跨方向讨论，产出共识综述，再各自生成假设 (2.6)，最终选出最佳方向进入下游实验。\n✅ 综合多视角，假设质量更高\n✅ 避免重复研究\n\n【独立模式】\n每个方向的 Agent 独立跑完 Phase 2，互不通信。各自生成假设后分别进入下游实验。\n⚡ 更快 (无需等待同步)\n⚠️ 方向可能重叠，没有共识整合\n\n注: 无论哪种模式，知识仓库和实验结果仓库始终在 Agent 间共享。',
+  'discussion.hint_on': '2.5 综合后跨方向讨论 → 共识假设',
   'discussion.hint_off': '各方向独立出假设，更快但无共识',
 
   // Language

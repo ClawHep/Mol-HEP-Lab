@@ -7,11 +7,11 @@ interface Props {
 }
 
 const PIPELINE: { key: string; labelKey: string; color: string }[] = [
-  { key: 'init_to_idea',          labelKey: 'queue.stage_idea',       color: '#f59e0b' },
-  { key: 'idea_to_experiment',    labelKey: 'queue.stage_experiment', color: '#3b82f6' },
-  { key: 'experiment_to_coding',  labelKey: 'queue.stage_coding',    color: '#10b981' },
-  { key: 'coding_to_execution',   labelKey: 'queue.stage_execution', color: '#ef4444' },
-  { key: 'execution_to_writing',  labelKey: 'queue.stage_writing',   color: '#a855f7' },
+  { key: 'phase_strategy',       labelKey: 'queue.stage_strategy',       color: '#f59e0b' },
+  { key: 'phase_exploration',    labelKey: 'queue.stage_exploration',    color: '#3b82f6' },
+  { key: 'phase_processing',     labelKey: 'queue.stage_processing',    color: '#10b981' },
+  { key: 'phase_inference',      labelKey: 'queue.stage_inference',     color: '#ef4444' },
+  { key: 'phase_documentation',  labelKey: 'queue.stage_documentation', color: '#a855f7' },
 ];
 
 export default memo(function QueuePanel({ queues }: Props) {

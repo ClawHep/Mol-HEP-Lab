@@ -26,19 +26,20 @@ hep/
 - `hep/methodology/` and `hep/orchestration/` are human reference —
   agents get instructions injected via the Rust pipeline prompt system.
 
-## HEP methodology integration
+## Pipeline structure
 
-The 26-stage Mol-HEP-Lab pipeline maps to MoltHep's 5-phase structure:
+The pipeline uses a unified 5-phase / 26-step structure. Each step is
+addressed as `Phase.Step` (e.g. "3.4" = Phase 3 Processing, step 4 Sanity Check).
 
-| MoltHep Phase | Mol-HEP-Lab Stages | Key Artifacts |
+| Phase | Steps | Key Artifacts |
 |---|---|---|
-| 1. Strategy | S1-S2 (Topic + Decompose) | STRATEGY.md, goal.md |
-| 2. Exploration | S3-S8 (Literature + Synthesis) | data inventory, variable ranking |
-| 3. Processing | S9-S13 (Design + Code + Sanity) | selection code, background model |
-| 4. Inference | S14-S18 (Execution + Analysis) | fit results, systematics table |
-| 5. Documentation | S19-S22 (Paper Writing) | analysis note, paper_draft.md |
+| 1. Strategy | 1.1 Topic Init, 1.2 Problem Decompose | STRATEGY.md, goal.md |
+| 2. Exploration | 2.1–2.6 (Search → Hypothesis Gen) | data inventory, variable ranking |
+| 3. Processing | 3.1–3.7 (Design → Iterative Refine) | selection code, background model |
+| 4. Inference | 4.1–4.3 (Analysis → Knowledge Summary) | fit results, systematics table |
+| 5. Documentation | 5.1–5.8 (Outline → Citation Verify) | analysis note, paper_draft.md |
 
-Review gates at S5, S9, S23 align with MoltHep phase boundaries.
+Review gates: 2.3 Literature Screen, 3.1 Experiment Design, 5.5 Quality Gate.
 
 ## HEP-specific tools
 

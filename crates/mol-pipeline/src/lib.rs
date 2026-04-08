@@ -1,7 +1,8 @@
 //! Mol-HEP-Lab: Pipeline execution and stage orchestration.
 //!
-//! This crate implements the 26-stage research pipeline state machine and
-//! runner, ported from the Python `mol` backend.
+//! This crate implements the 5-phase / 26-step research pipeline state machine
+//! and runner. Phases map to HEP analysis workflow; steps provide fine-grained
+//! checkpointing within each phase.
 //!
 //! # Modules
 //!
@@ -26,8 +27,9 @@ pub mod stages_impl;
 
 pub use stages::{
     advance, advance_with_opts, decision_rollback, default_rollback_stage, gate_required,
-    gate_rollback, next_stage, phase_map, previous_stage, Stage, StageStatus, TransitionEvent,
-    TransitionOutcome, GATE_STAGES, MAX_DECISION_PIVOTS, NONCRITICAL_STAGES, STAGE_SEQUENCE,
+    gate_rollback, next_stage, phase_map, previous_stage, Phase, Stage, StageStatus,
+    TransitionEvent, TransitionOutcome, GATE_STAGES, MAX_DECISION_PIVOTS, NONCRITICAL_STAGES,
+    PHASES, STAGE_SEQUENCE,
 };
 
 pub use checkpoint::{read_checkpoint, resume_from_checkpoint, write_checkpoint, write_heartbeat};

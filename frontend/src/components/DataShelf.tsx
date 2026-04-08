@@ -1,5 +1,5 @@
 import { memo, useState, useMemo } from 'react';
-import { REPO_META, LAYER_META, ARTIFACT_LABELS, STAGE_META } from '../types';
+import { REPO_META, LAYER_META, ARTIFACT_LABELS, STAGE_META, phaseStepLabel } from '../types';
 import type { Artifact, RepoId, RCStage } from '../types';
 import { useLocale } from '../i18n';
 
@@ -91,9 +91,10 @@ function groupByStage(files: Artifact[], locale: string): StageGroup[] {
   const sortedStages = [...stageMap.keys()].sort((a, b) => a - b);
   for (const s of sortedStages) {
     const meta = STAGE_META[s as RCStage];
+    const label = phaseStepLabel(s as RCStage);
     const stageName = meta
-      ? `S${meta.displayNumber || s} ${locale === 'zh' ? meta.name : meta.key.replace(/_/g, ' ').toLowerCase()}`
-      : `S${s}`;
+      ? `${label || s} ${locale === 'zh' ? meta.name : meta.key.replace(/_/g, ' ').toLowerCase()}`
+      : `${label || s}`;
     groups.push({ stage: s, stageName, artifacts: stageMap.get(s)! });
   }
   if (noStage.length > 0) {

@@ -1180,98 +1180,92 @@ pub async fn execute_stage(stage: Stage, context: &StageContext) -> Result<Stage
     let t0 = std::time::Instant::now();
 
     let mut result = match stage {
-        // Phase A: Research Scoping ----------------------------------------
+        // Phase 1: Strategy ------------------------------------------------
         Stage::TopicInit => {
-            stages_impl::phase_a::execute_topic_init(stage, context).await
+            stages_impl::phase1::execute_topic_init(stage, context).await
         }
         Stage::ProblemDecompose => {
-            stages_impl::phase_a::execute_problem_decompose(stage, context).await
+            stages_impl::phase1::execute_problem_decompose(stage, context).await
         }
 
-        // Phase B: Literature Discovery ------------------------------------
+        // Phase 2: Exploration ---------------------------------------------
         Stage::SearchStrategy => {
-            stages_impl::phase_b::execute_search_strategy(stage, context).await
+            stages_impl::phase2::execute_search_strategy(stage, context).await
         }
         Stage::LiteratureCollect => {
-            stages_impl::phase_b::execute_literature_collect(stage, context).await
+            stages_impl::phase2::execute_literature_collect(stage, context).await
         }
         Stage::LiteratureScreen => {
-            stages_impl::phase_b::execute_literature_screen(stage, context).await
+            stages_impl::phase2::execute_literature_screen(stage, context).await
         }
         Stage::KnowledgeExtract => {
-            stages_impl::phase_b::execute_knowledge_extract(stage, context).await
+            stages_impl::phase2::execute_knowledge_extract(stage, context).await
         }
-
-        // Phase C: Knowledge Synthesis -------------------------------------
         Stage::Synthesis => {
-            stages_impl::phase_c::execute_synthesis(stage, context).await
+            stages_impl::phase2::execute_synthesis(stage, context).await
         }
         Stage::HypothesisGen => {
-            stages_impl::phase_c::execute_hypothesis_gen(stage, context).await
+            stages_impl::phase2::execute_hypothesis_gen(stage, context).await
         }
 
-        // Phase D: Experiment Design ----------------------------------------
+        // Phase 3: Processing ----------------------------------------------
         Stage::ExperimentDesign => {
-            stages_impl::phase_d::execute_experiment_design(stage, context).await
+            stages_impl::phase3::execute_experiment_design(stage, context).await
         }
         Stage::CodebaseSearch => {
-            stages_impl::phase_d::execute_codebase_search(stage, context).await
+            stages_impl::phase3::execute_codebase_search(stage, context).await
         }
         Stage::CodeGeneration => {
-            stages_impl::phase_d::execute_code_generation(stage, context).await
+            stages_impl::phase3::execute_code_generation(stage, context).await
         }
         Stage::SanityCheck => {
-            stages_impl::phase_d::execute_sanity_check(stage, context).await
+            stages_impl::phase3::execute_sanity_check(stage, context).await
         }
         Stage::ResourcePlanning => {
-            stages_impl::phase_d::execute_resource_planning(stage, context).await
+            stages_impl::phase3::execute_resource_planning(stage, context).await
         }
-
-        // Phase E: Experiment Execution ------------------------------------
         Stage::ExperimentRun => {
-            stages_impl::phase_e::execute_experiment_run(stage, context).await
+            stages_impl::phase3::execute_experiment_run(stage, context).await
         }
         Stage::IterativeRefine => {
-            stages_impl::phase_e::execute_iterative_refine(stage, context).await
+            stages_impl::phase3::execute_iterative_refine(stage, context).await
         }
 
-        // Phase F: Analysis & Decision -------------------------------------
+        // Phase 4: Inference -----------------------------------------------
         Stage::ResultAnalysis => {
-            stages_impl::phase_f::execute_result_analysis(stage, context).await
+            stages_impl::phase4::execute_result_analysis(stage, context).await
         }
         Stage::ResearchDecision => {
-            stages_impl::phase_f::execute_research_decision(stage, context).await
+            stages_impl::phase4::execute_research_decision(stage, context).await
         }
         Stage::KnowledgeSummary => {
-            stages_impl::phase_f::execute_knowledge_summary(stage, context).await
+            stages_impl::phase4::execute_knowledge_summary(stage, context).await
         }
 
-        // Phase G: Paper Writing -------------------------------------------
+        // Phase 5: Documentation -------------------------------------------
         Stage::PaperOutline => {
-            stages_impl::phase_g::execute_paper_outline(stage, context).await
+            stages_impl::phase5::execute_paper_outline(stage, context).await
         }
         Stage::PaperDraft => {
-            stages_impl::phase_g::execute_paper_draft(stage, context).await
+            stages_impl::phase5::execute_paper_draft(stage, context).await
         }
         Stage::PeerReview => {
-            stages_impl::phase_g::execute_peer_review(stage, context).await
+            stages_impl::phase5::execute_peer_review(stage, context).await
         }
         Stage::PaperRevision => {
-            stages_impl::phase_g::execute_paper_revision(stage, context).await
+            stages_impl::phase5::execute_paper_revision(stage, context).await
         }
-
-        // Phase H: Finalization --------------------------------------------
         Stage::QualityGate => {
-            stages_impl::phase_h::execute_quality_gate(stage, context).await
+            stages_impl::phase5::execute_quality_gate(stage, context).await
         }
         Stage::KnowledgeArchive => {
-            stages_impl::phase_h::execute_knowledge_archive(stage, context).await
+            stages_impl::phase5::execute_knowledge_archive(stage, context).await
         }
         Stage::ExportPublish => {
-            stages_impl::phase_h::execute_export_publish(stage, context).await
+            stages_impl::phase5::execute_export_publish(stage, context).await
         }
         Stage::CitationVerify => {
-            stages_impl::phase_h::execute_citation_verify(stage, context).await
+            stages_impl::phase5::execute_citation_verify(stage, context).await
         }
 
         // Special ----------------------------------------------------------

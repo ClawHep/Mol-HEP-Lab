@@ -133,11 +133,11 @@ pub struct HepReviewVerdict {
 // HEP Analysis Phases
 // ---------------------------------------------------------------------------
 
-/// The 5 canonical HEP analysis phases.
+/// The 5 canonical HEP analysis phases (aligned with pipeline Phase enum).
 pub const HEP_PHASES: &[&str] = &[
     "phase1_strategy",
     "phase2_exploration",
-    "phase3_selection",
+    "phase3_processing",
     "phase4_inference",
     "phase5_documentation",
 ];
@@ -207,7 +207,7 @@ pub fn scaffold_analysis(
     let phase_templates = [
         ("phase1_strategy", "phase1_claude.md"),
         ("phase2_exploration", "phase2_claude.md"),
-        ("phase3_selection", "phase3_claude.md"),
+        ("phase3_processing", "phase3_claude.md"),
         ("phase4_inference", "phase4_claude.md"),
         ("phase5_documentation", "phase5_claude.md"),
     ];

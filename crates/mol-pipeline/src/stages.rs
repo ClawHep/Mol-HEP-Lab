@@ -14,8 +14,9 @@ use std::collections::HashMap;
 
 /// All pipeline stages in execution order.
 ///
-/// The discriminants match the Python `Stage(IntEnum)` values exactly so that
-/// checkpoints and JSON wire format remain compatible.
+/// Organised into 5 HEP analysis phases. Each stage is addressable as
+/// `Phase.Step` (e.g. "3.4" = Phase 3 Processing, step 4 Sanity Check).
+/// The discriminants are stable for checkpoint / wire-format compatibility.
 #[derive(
     Debug,
     Clone,
@@ -32,47 +33,41 @@ use std::collections::HashMap;
 )]
 #[repr(i32)]
 pub enum Stage {
-    // Phase A: Research Scoping
-    TopicInit = 1,
-    ProblemDecompose = 2,
+    // Phase 1: Strategy
+    TopicInit = 1,          // 1.1
+    ProblemDecompose = 2,   // 1.2
 
-    // Phase B: Literature Discovery
-    SearchStrategy = 3,
-    LiteratureCollect = 4,
-    LiteratureScreen = 5, // GATE
-    KnowledgeExtract = 6,
+    // Phase 2: Exploration
+    SearchStrategy = 3,     // 2.1
+    LiteratureCollect = 4,  // 2.2
+    LiteratureScreen = 5,   // 2.3 GATE
+    KnowledgeExtract = 6,   // 2.4
+    Synthesis = 7,          // 2.5
+    HypothesisGen = 8,      // 2.6
 
-    // Phase C: Knowledge Synthesis
-    Synthesis = 7,
-    HypothesisGen = 8,
+    // Phase 3: Processing
+    ExperimentDesign = 9,   // 3.1 GATE
+    CodebaseSearch = 10,    // 3.2
+    CodeGeneration = 11,    // 3.3
+    SanityCheck = 12,       // 3.4
+    ResourcePlanning = 13,  // 3.5
+    ExperimentRun = 14,     // 3.6
+    IterativeRefine = 15,   // 3.7
 
-    // Phase D: Experiment Design
-    ExperimentDesign = 9, // GATE
-    CodebaseSearch = 10,
-    CodeGeneration = 11,
-    SanityCheck = 12,
-    ResourcePlanning = 13,
+    // Phase 4: Inference
+    ResultAnalysis = 16,    // 4.1
+    ResearchDecision = 17,  // 4.2
+    KnowledgeSummary = 18,  // 4.3
 
-    // Phase E: Experiment Execution
-    ExperimentRun = 14,
-    IterativeRefine = 15,
-
-    // Phase F: Analysis & Decision
-    ResultAnalysis = 16,
-    ResearchDecision = 17,
-    KnowledgeSummary = 18,
-
-    // Phase G: Paper Writing
-    PaperOutline = 19,
-    PaperDraft = 20,
-    PeerReview = 21,
-    PaperRevision = 22,
-
-    // Phase H: Finalization
-    QualityGate = 23, // GATE
-    KnowledgeArchive = 24,
-    ExportPublish = 25,
-    CitationVerify = 26,
+    // Phase 5: Documentation
+    PaperOutline = 19,      // 5.1
+    PaperDraft = 20,        // 5.2
+    PeerReview = 21,        // 5.3
+    PaperRevision = 22,     // 5.4
+    QualityGate = 23,       // 5.5 GATE
+    KnowledgeArchive = 24,  // 5.6
+    ExportPublish = 25,     // 5.7
+    CitationVerify = 26,    // 5.8
 
     // Special
     Discussion = 100,
@@ -115,6 +110,89 @@ impl Stage {
     /// Numeric value as `i32`.
     pub fn as_i32(self) -> i32 {
         self.into()
+    }
+
+    /// Which HEP phase this stage belongs to.
+    pub fn phase(self) -> Phase {
+        match self {
+            Stage::TopicInit | Stage::ProblemDecompose => Phase::Strategy,
+            Stage::SearchStrategy
+            | Stage::LiteratureCollect
+            | Stage::LiteratureScreen
+            | Stage::KnowledgeExtract
+            | Stage::Synthesis
+            | Stage::HypothesisGen => Phase::Exploration,
+            Stage::ExperimentDesign
+            | Stage::CodebaseSearch
+            | Stage::CodeGeneration
+            | Stage::SanityCheck
+            | Stage::ResourcePlanning
+            | Stage::ExperimentRun
+            | Stage::IterativeRefine => Phase::Processing,
+            Stage::ResultAnalysis
+            | Stage::ResearchDecision
+            | Stage::KnowledgeSummary => Phase::Inference,
+            Stage::PaperOutline
+            | Stage::PaperDraft
+            | Stage::PeerReview
+            | Stage::PaperRevision
+            | Stage::QualityGate
+            | Stage::KnowledgeArchive
+            | Stage::ExportPublish
+            | Stage::CitationVerify => Phase::Documentation,
+            Stage::Discussion => Phase::Strategy, // special: assign to first phase
+        }
+    }
+
+    /// 1-based step index within the parent phase (e.g. SanityCheck → 4).
+    pub fn phase_step(self) -> u8 {
+        let stages = self.phase().stages();
+        stages
+            .iter()
+            .position(|&s| s == self)
+            .map(|i| (i + 1) as u8)
+            .unwrap_or(0)
+    }
+
+    /// Display label in `Phase.Step` format (e.g. "3.4 Sanity Check").
+    pub fn phase_label(self) -> String {
+        if self == Stage::Discussion {
+            return "Discussion".to_owned();
+        }
+        format!("{}.{} {}", self.phase().number(), self.phase_step(), self.display_name())
+    }
+
+    /// Human-friendly display name (e.g. "Sanity Check" instead of "SANITY_CHECK").
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Stage::TopicInit => "Topic Init",
+            Stage::ProblemDecompose => "Problem Decompose",
+            Stage::SearchStrategy => "Search Strategy",
+            Stage::LiteratureCollect => "Literature Collect",
+            Stage::LiteratureScreen => "Literature Screen",
+            Stage::KnowledgeExtract => "Knowledge Extract",
+            Stage::Synthesis => "Synthesis",
+            Stage::HypothesisGen => "Hypothesis Generation",
+            Stage::ExperimentDesign => "Experiment Design",
+            Stage::CodebaseSearch => "Codebase Search",
+            Stage::CodeGeneration => "Code Generation",
+            Stage::SanityCheck => "Sanity Check",
+            Stage::ResourcePlanning => "Resource Planning",
+            Stage::ExperimentRun => "Experiment Run",
+            Stage::IterativeRefine => "Iterative Refine",
+            Stage::ResultAnalysis => "Result Analysis",
+            Stage::ResearchDecision => "Research Decision",
+            Stage::KnowledgeSummary => "Knowledge Summary",
+            Stage::PaperOutline => "Paper Outline",
+            Stage::PaperDraft => "Paper Draft",
+            Stage::PeerReview => "Peer Review",
+            Stage::PaperRevision => "Paper Revision",
+            Stage::QualityGate => "Quality Gate",
+            Stage::KnowledgeArchive => "Knowledge Archive",
+            Stage::ExportPublish => "Export & Publish",
+            Stage::CitationVerify => "Citation Verify",
+            Stage::Discussion => "Discussion",
+        }
     }
 
     /// Parse a stage from its human-readable name (e.g. `"TOPIC_INIT"`).
@@ -300,52 +378,105 @@ pub const NONCRITICAL_STAGES: &[Stage] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Phase map
+// Phase system
 // ---------------------------------------------------------------------------
 
-/// Phase label → stages.  Ordered for deterministic iteration.
-pub fn phase_map() -> Vec<(&'static str, &'static [Stage])> {
-    vec![
-        ("A: Research Scoping", &[Stage::TopicInit, Stage::ProblemDecompose] as &[Stage]),
-        (
-            "B: Literature Discovery",
-            &[
+/// The 5 HEP analysis phases.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum Phase {
+    Strategy = 1,
+    Exploration = 2,
+    Processing = 3,
+    Inference = 4,
+    Documentation = 5,
+}
+
+impl Phase {
+    pub fn number(self) -> u8 {
+        self as u8
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Phase::Strategy => "Strategy",
+            Phase::Exploration => "Exploration",
+            Phase::Processing => "Processing",
+            Phase::Inference => "Inference",
+            Phase::Documentation => "Documentation",
+        }
+    }
+
+    /// Stages belonging to this phase, in execution order.
+    pub fn stages(self) -> &'static [Stage] {
+        match self {
+            Phase::Strategy => &[Stage::TopicInit, Stage::ProblemDecompose],
+            Phase::Exploration => &[
                 Stage::SearchStrategy,
                 Stage::LiteratureCollect,
                 Stage::LiteratureScreen,
                 Stage::KnowledgeExtract,
+                Stage::Synthesis,
+                Stage::HypothesisGen,
             ],
-        ),
-        ("C: Knowledge Synthesis", &[Stage::Synthesis, Stage::HypothesisGen]),
-        (
-            "D: Experiment Design",
-            &[
+            Phase::Processing => &[
                 Stage::ExperimentDesign,
                 Stage::CodebaseSearch,
                 Stage::CodeGeneration,
                 Stage::SanityCheck,
                 Stage::ResourcePlanning,
+                Stage::ExperimentRun,
+                Stage::IterativeRefine,
             ],
-        ),
-        ("E: Experiment Execution", &[Stage::ExperimentRun, Stage::IterativeRefine]),
-        (
-            "F: Analysis & Decision",
-            &[Stage::ResultAnalysis, Stage::ResearchDecision, Stage::KnowledgeSummary],
-        ),
-        (
-            "G: Paper Writing",
-            &[Stage::PaperOutline, Stage::PaperDraft, Stage::PeerReview, Stage::PaperRevision],
-        ),
-        (
-            "H: Finalization",
-            &[
+            Phase::Inference => &[
+                Stage::ResultAnalysis,
+                Stage::ResearchDecision,
+                Stage::KnowledgeSummary,
+            ],
+            Phase::Documentation => &[
+                Stage::PaperOutline,
+                Stage::PaperDraft,
+                Stage::PeerReview,
+                Stage::PaperRevision,
                 Stage::QualityGate,
                 Stage::KnowledgeArchive,
                 Stage::ExportPublish,
                 Stage::CitationVerify,
             ],
-        ),
-    ]
+        }
+    }
+}
+
+impl std::fmt::Display for Phase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Phase {}: {}", self.number(), self.name())
+    }
+}
+
+/// All phases in order.
+pub const PHASES: &[Phase] = &[
+    Phase::Strategy,
+    Phase::Exploration,
+    Phase::Processing,
+    Phase::Inference,
+    Phase::Documentation,
+];
+
+/// Phase label → stages. Ordered for deterministic iteration.
+pub fn phase_map() -> Vec<(&'static str, &'static [Stage])> {
+    PHASES
+        .iter()
+        .map(|p| {
+            let label: &'static str = match p {
+                Phase::Strategy => "1: Strategy",
+                Phase::Exploration => "2: Exploration",
+                Phase::Processing => "3: Processing",
+                Phase::Inference => "4: Inference",
+                Phase::Documentation => "5: Documentation",
+            };
+            (label, p.stages())
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -732,5 +863,44 @@ mod tests {
         assert_eq!(Stage::TopicInit.as_i32(), 1);
         assert_eq!(Stage::CitationVerify.as_i32(), 26);
         assert_eq!(Stage::Discussion.as_i32(), 100);
+    }
+
+    #[test]
+    fn phase_assignment() {
+        assert_eq!(Stage::TopicInit.phase(), Phase::Strategy);
+        assert_eq!(Stage::HypothesisGen.phase(), Phase::Exploration);
+        assert_eq!(Stage::ExperimentRun.phase(), Phase::Processing);
+        assert_eq!(Stage::ResultAnalysis.phase(), Phase::Inference);
+        assert_eq!(Stage::QualityGate.phase(), Phase::Documentation);
+    }
+
+    #[test]
+    fn phase_step_numbering() {
+        assert_eq!(Stage::TopicInit.phase_step(), 1);
+        assert_eq!(Stage::ProblemDecompose.phase_step(), 2);
+        assert_eq!(Stage::SanityCheck.phase_step(), 4); // 3.4
+        assert_eq!(Stage::CitationVerify.phase_step(), 8); // 5.8
+    }
+
+    #[test]
+    fn phase_label_format() {
+        assert_eq!(Stage::SanityCheck.phase_label(), "3.4 Sanity Check");
+        assert_eq!(Stage::TopicInit.phase_label(), "1.1 Topic Init");
+        assert_eq!(Stage::CitationVerify.phase_label(), "5.8 Citation Verify");
+        assert_eq!(Stage::Discussion.phase_label(), "Discussion");
+    }
+
+    #[test]
+    fn all_stages_covered_by_phases() {
+        let mut covered: Vec<Stage> = PHASES.iter().flat_map(|p| p.stages().iter().copied()).collect();
+        covered.sort();
+        let mut all: Vec<Stage> = STAGE_SEQUENCE.to_vec();
+        all.sort();
+        assert_eq!(covered, all, "every stage must belong to exactly one phase");
+    }
+
+    #[test]
+    fn phase_map_has_five_entries() {
+        assert_eq!(phase_map().len(), 5);
     }
 }

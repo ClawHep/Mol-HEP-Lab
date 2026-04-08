@@ -132,7 +132,7 @@ impl Default for LLMClientConfig {
             temperature: 0.7,
             max_retries: 5,
             retry_base_delay: Duration::from_secs(3),
-            timeout: Duration::from_secs(600),
+            timeout: Duration::ZERO,  // no timeout by default; research tasks need unlimited time
             user_agent: DEFAULT_USER_AGENT.to_owned(),
             extra_headers: Vec::new(),
             fallback_url: String::new(),
@@ -160,10 +160,13 @@ pub struct LLMClient {
 impl LLMClient {
     /// Create a new client from the given configuration.
     pub fn new(config: LLMClientConfig) -> Result<Self> {
-        let http = Client::builder()
-            .timeout(config.timeout)
-            .user_agent(&config.user_agent)
-            .build()?;
+        let mut builder = Client::builder()
+            .user_agent(&config.user_agent);
+        // Only set timeout if non-zero; 0 = no timeout (long-running research tasks)
+        if !config.timeout.is_zero() {
+            builder = builder.timeout(config.timeout);
+        }
+        let http = builder.build()?;
 
         let model_chain = std::iter::once(config.primary_model.clone())
             .chain(config.fallback_models.iter().cloned())

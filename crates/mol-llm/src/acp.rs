@@ -291,24 +291,22 @@ impl ACPClient {
     }
 
     async fn send_cli(&self, acpx: &PathBuf, prompt: &str) -> Result<String> {
-        let output = tokio::time::timeout(
-            std::time::Duration::from_secs(self.config.timeout_sec),
-            Command::new(acpx)
-                .args([
-                    "--approve-all",
-                    "--ttl",
-                    "0",
-                    "--cwd",
-                    &self.abs_cwd(),
-                    &self.config.agent,
-                    "-s",
-                    &self.config.session_name,
-                    prompt,
-                ])
-                .output(),
-        )
-        .await
-        .map_err(|_| anyhow!("ACP prompt timed out after {}s", self.config.timeout_sec))??;
+        // No artificial timeout — research tasks need sufficient time to complete.
+        // The runner monitors heartbeat/artifacts for liveness instead.
+        let output = Command::new(acpx)
+            .args([
+                "--approve-all",
+                "--ttl",
+                "0",
+                "--cwd",
+                &self.abs_cwd(),
+                &self.config.agent,
+                "-s",
+                &self.config.session_name,
+                prompt,
+            ])
+            .output()
+            .await?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

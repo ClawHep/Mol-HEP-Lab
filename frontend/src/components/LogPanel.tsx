@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { LAYER_META, ALL_LAYERS, STAGE_META } from '../types';
+import { LAYER_META, ALL_LAYERS, STAGE_META, phaseOf, phaseStepLabel } from '../types';
 import type { LogEntry, AgentLayer } from '../types';
 import { useLocale } from '../i18n';
 
 function getLayerForStage(stage: number | null | undefined): AgentLayer | null {
   if (!stage) return null;
-  if (stage >= 1 && stage <= 8) return 'idea';
-  if (stage === 100) return 'idea';
-  if (stage === 9) return 'experiment';
-  if (stage >= 10 && stage <= 13) return 'coding';
-  if (stage >= 14 && stage <= 18) return 'execution';
-  if (stage >= 19 && stage <= 22) return 'writing';
+  if (stage >= 1 && stage <= 2) return 'strategy';
+  if (stage >= 3 && stage <= 8) return 'exploration';
+  if (stage === 100) return 'exploration';
+  if (stage >= 9 && stage <= 15) return 'processing';
+  if (stage >= 16 && stage <= 18) return 'inference';
+  if (stage >= 19 && stage <= 26) return 'documentation';
   return null;
 }
 
@@ -78,7 +78,7 @@ export default function LogPanel({ logs }: Props) {
                 <span className={`glog-stage${log.stage === 100 ? ' glog-stage-discussion' : ''}`} title={STAGE_META[log.stage]?.key}>
                   {log.stage === 100
                     ? discussionLabel
-                    : `S${STAGE_META[log.stage]?.displayNumber ?? log.stage}`}
+                    : phaseStepLabel(log.stage as any) || `S${log.stage}`}
                 </span>
               )}
               <span className="glog-msg">{log.message}</span>

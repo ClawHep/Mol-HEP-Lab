@@ -13,17 +13,17 @@ function makeAgent(id: string, name: string, layer: AgentLayer, runId: string): 
 }
 
 export const INITIAL_AGENTS: MolAgent[] = [
-  makeAgent('L1-01', '🧬 分子调研长·Alpha',  AgentLayer.IDEA,       'run-001'),
-  makeAgent('L1-02', '🧬 分子调研员·Beta',   AgentLayer.IDEA,       'run-002'),
-  makeAgent('L2-01', '🧬 分子实验师·α',      AgentLayer.EXPERIMENT, 'run-001'),
-  makeAgent('L2-02', '🧬 分子实验师·β',      AgentLayer.EXPERIMENT, 'run-002'),
-  makeAgent('L3-01', '🧬 分子码农·甲',       AgentLayer.CODING,     'run-001'),
-  makeAgent('L3-02', '🧬 分子码农·乙',       AgentLayer.CODING,     'run-002'),
-  makeAgent('L3-03', '🧬 分子码农·丙',       AgentLayer.CODING,     'run-003'),
-  makeAgent('L4-01', '🧬 分子执行者·壹',     AgentLayer.EXECUTION,  'run-001'),
-  makeAgent('L4-02', '🧬 分子执行者·貳',     AgentLayer.EXECUTION,  'run-002'),
-  makeAgent('L4-03', '🧬 分子执行者·叁',     AgentLayer.EXECUTION,  'run-003'),
-  makeAgent('L4-04', '🧬 分子执行者·肆',     AgentLayer.EXECUTION,  'run-004'),
+  makeAgent('P1-01', 'Lead Analyst',           AgentLayer.STRATEGY,      'run-001'),
+  makeAgent('P2-01', 'Theory Scout',           AgentLayer.EXPLORATION,   'run-001'),
+  makeAgent('P2-02', 'Data Explorer',          AgentLayer.EXPLORATION,   'run-002'),
+  makeAgent('P3-01', 'Signal Lead',            AgentLayer.PROCESSING,    'run-001'),
+  makeAgent('P3-02', 'Background Estimator',   AgentLayer.PROCESSING,    'run-002'),
+  makeAgent('P3-03', 'ML Specialist',          AgentLayer.PROCESSING,    'run-003'),
+  makeAgent('P4-01', 'Cross Checker',          AgentLayer.INFERENCE,     'run-001'),
+  makeAgent('P4-02', 'Systematics Fitter',     AgentLayer.INFERENCE,     'run-002'),
+  makeAgent('P5-01', 'Physics Reviewer',       AgentLayer.DOCUMENTATION, 'run-001'),
+  makeAgent('P5-02', 'Note Writer',            AgentLayer.DOCUMENTATION, 'run-002'),
+  makeAgent('P5-03', 'Plot Validator',         AgentLayer.DOCUMENTATION, 'run-003'),
 ];
 
 const TASK_DETAILS: Record<number, string[]> = {
@@ -45,43 +45,43 @@ const TASK_DETAILS: Record<number, string[]> = {
 };
 
 const LOG_TEMPLATES: Record<string, Array<{ msg: string; level: 'info' | 'success' | 'warning' | 'error' }>> = {
-  [AgentLayer.IDEA]: [
-    { msg: '发现 5 篇高相关度新论文 (OpenAlex)', level: 'info' },
-    { msg: '文献筛选通过: shortlist 12 篇 → 8 篇', level: 'success' },
-    { msg: '知识卡片提取完成: 8 cards', level: 'success' },
-    { msg: 'Semantic Scholar API 速率限制，等待重试...', level: 'warning' },
-    { msg: '综合分析发现 3 个研究空白', level: 'info' },
-    { msg: '生成 2 个可证伪假设', level: 'success' },
-    { msg: 'arXiv 连接超时', level: 'error' },
-    { msg: '假设辩论: Agent 2/3 同意，1 反对 → 通过', level: 'info' },
+  [AgentLayer.STRATEGY]: [
+    { msg: 'Parsing research topic, generating SMART objectives...', level: 'info' },
+    { msg: 'Problem decomposed into 4 sub-questions', level: 'success' },
+    { msg: 'HEP domain detected: routing to HEP pipeline', level: 'info' },
   ],
-  [AgentLayer.EXPERIMENT]: [
-    { msg: '实验方案: 5 组对照 + 3 组消融', level: 'success' },
-    { msg: '预计 GPU 需求: 4×A100, 约 12h', level: 'info' },
-    { msg: '资源不足: 需要 8×A100 但只有 4×', level: 'warning' },
-    { msg: '实验方案 GATE 审核通过', level: 'success' },
-    { msg: 'schedule.json 已生成', level: 'info' },
-    { msg: 'Baseline 确定: LLaMA-7B + LoRA', level: 'info' },
+  [AgentLayer.EXPLORATION]: [
+    { msg: 'Found 12 relevant papers via INSPIRE-HEP', level: 'info' },
+    { msg: 'Literature screen passed: 12 → 8 shortlisted', level: 'success' },
+    { msg: 'Knowledge cards extracted: 8 cards', level: 'success' },
+    { msg: 'INSPIRE API rate limit, retrying...', level: 'warning' },
+    { msg: 'Synthesis identified 3 unexplored signal regions', level: 'info' },
+    { msg: 'Generated 2 falsifiable hypotheses', level: 'success' },
+    { msg: 'arXiv connection timeout', level: 'error' },
   ],
-  [AgentLayer.CODING]: [
-    { msg: '数据预处理 pipeline 编写完成', level: 'success' },
-    { msg: '模型核心模块: AST 验证通过', level: 'success' },
-    { msg: 'Lint 检查: 2 warnings, 0 errors', level: 'warning' },
-    { msg: '训练循环 + WandB 日志集成完成', level: 'success' },
-    { msg: '类型错误: Tensor shape mismatch [B,S,D]', level: 'error' },
-    { msg: '评估脚本 (BLEU/ROUGE/F1) 编写完成', level: 'success' },
-    { msg: '代码已提交至 experiment/ 目录', level: 'info' },
+  [AgentLayer.PROCESSING]: [
+    { msg: 'Experiment design: 3 signal regions + 5 control regions', level: 'success' },
+    { msg: 'Generated pyhf workspace with 12 systematic sources', level: 'info' },
+    { msg: 'Sanity check: NaN detected in BDT output, fixing...', level: 'warning' },
+    { msg: 'Experiment design GATE approved', level: 'success' },
+    { msg: 'uproot I/O: processing 2.4M events from nanoAOD', level: 'info' },
+    { msg: 'Background model fit converged (chi2/ndf = 1.12)', level: 'success' },
+    { msg: 'fastjet clustering: anti-kT R=0.4 completed', level: 'info' },
   ],
-  [AgentLayer.EXECUTION]: [
-    { msg: '训练任务已提交 (sandbox: docker)', level: 'info' },
-    { msg: 'Epoch 3/10, loss=1.87, lr=2e-4', level: 'info' },
-    { msg: 'CUDA OOM! 降低 batch_size 16→8 重试', level: 'error' },
-    { msg: '迭代修复 #2: 梯度裁剪 max_norm=1.0', level: 'warning' },
-    { msg: '评估完成: BLEU=32.5, ROUGE-L=41.2', level: 'success' },
-    { msg: '检测到 loss 发散 → 回滚 checkpoint-ep5', level: 'warning' },
-    { msg: '结果分析: 假设 H1 显著 (p<0.01), H2 不显著', level: 'success' },
-    { msg: '决策: PROCEED → 实验达到预期', level: 'success' },
-    { msg: '决策: PIVOT → 回退至假设生成重新探索', level: 'warning' },
+  [AgentLayer.INFERENCE]: [
+    { msg: 'CLs upper limit: mu < 0.85 at 95% CL', level: 'success' },
+    { msg: 'Observed significance: 2.3 sigma (expected: 1.8)', level: 'info' },
+    { msg: 'Decision: PROCEED → results meet publication threshold', level: 'success' },
+    { msg: 'Decision: PIVOT → insufficient sensitivity, revise selection', level: 'warning' },
+    { msg: 'Systematic uncertainty breakdown generated', level: 'info' },
+  ],
+  [AgentLayer.DOCUMENTATION]: [
+    { msg: 'Paper outline generated with 8 sections', level: 'success' },
+    { msg: 'mplhep figures rendered: 12 plots', level: 'info' },
+    { msg: 'Peer review: 2 A-items, 3 B-items, 1 C-item', level: 'warning' },
+    { msg: 'Quality gate PASSED', level: 'success' },
+    { msg: 'Citation verification: all 34 refs valid', level: 'success' },
+    { msg: 'LaTeX package exported', level: 'info' },
   ],
 };
 

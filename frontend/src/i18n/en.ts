@@ -28,7 +28,7 @@ const en: Record<string, string> = {
   'project.mode.lab_desc': 'Multi-angle parallel research → Cross-domain discussion → Unified hypothesis',
   'project.mode.lab_independent_desc': 'Each direction generates hypotheses independently, faster but no consensus',
   'project.mode.reproduce_desc': 'Single Agent full pipeline reproduction',
-  'project.mode.help': '🔬 Lab·Discuss: Multi-angle parallel research. After S7, agents cross-discuss to reach consensus and generate a unified hypothesis.\n\n🔬 Lab·Solo: Multi-angle parallel research. Each direction generates hypotheses independently — faster but no cross-direction consensus.\n\n📄 Reproduce: Single agent reproduces the target paper\'s method and experiments end-to-end.',
+  'project.mode.help': '🔬 Lab·Discuss: Multi-angle parallel research. After Phase 2 synthesis (2.5), agents cross-discuss to reach consensus and generate a unified hypothesis.\n\n🔬 Lab·Solo: Multi-angle parallel research. Each direction generates hypotheses independently — faster but no cross-direction consensus.\n\n📄 Reproduce: Single agent reproduces the target paper\'s method and experiments end-to-end.',
   'project.placeholder.lab': 'Research latest advances in video action models for embodied AI',
   'project.placeholder.reproduce': 'Reproduce SwitchCraft (arXiv:2602.23956) attention control method',
   'project.angles_placeholder': 'Research angles (semicolon-separated, default CV, e.g.: CV; VLM; World Model)',
@@ -69,19 +69,19 @@ const en: Record<string, string> = {
   'layer.log_title': '📋 Layer Logs',
   'layer.no_logs': 'No logs yet',
 
-  // Layer names
-  'layer.idea.name': 'L1 · Research & Ideas',
-  'layer.idea.desc': 'Phase A→C: Topic → Literature → Synthesis → Hypothesis',
-  'layer.experiment.name': 'L2 · Experiment Design',
-  'layer.experiment.desc': 'Phase D: Experiment plan design',
-  'layer.coding.name': 'L3 · Code & Resources',
-  'layer.coding.desc': 'Phase D: Codebase search + Code gen + Resource planning',
-  'layer.execution.name': 'L4 · Execution & Refinement',
-  'layer.execution.desc': 'Phase E→F: Run → Iterate → Analyze → Decision',
-  'layer.writing.name': 'L5 · Paper Writing',
-  'layer.writing.desc': 'Phase G: Outline → Draft → Peer Review → Revision',
+  // Phase/Layer names
+  'layer.strategy.name': 'P1 · Strategy',
+  'layer.strategy.desc': 'Topic initialization and problem decomposition',
+  'layer.exploration.name': 'P2 · Exploration',
+  'layer.exploration.desc': 'Literature discovery, synthesis, and hypothesis generation',
+  'layer.processing.name': 'P3 · Processing',
+  'layer.processing.desc': 'Experiment design, code generation, and execution',
+  'layer.inference.name': 'P4 · Inference',
+  'layer.inference.desc': 'Result analysis, research decision, and knowledge summary',
+  'layer.documentation.name': 'P5 · Documentation',
+  'layer.documentation.desc': 'Paper writing, review, and publication',
 
-  // Stage names
+  // Stage names (Phase.Step)
   'stage.1': 'Topic Init',
   'stage.2': 'Problem Decompose',
   'stage.3': 'Search Strategy',
@@ -89,7 +89,6 @@ const en: Record<string, string> = {
   'stage.5': 'Literature Screen',
   'stage.6': 'Knowledge Extract',
   'stage.7': 'Synthesis',
-  'stage.100': 'Discussion',
   'stage.8': 'Hypothesis Gen',
   'stage.9': 'Experiment Design',
   'stage.10': 'Codebase Search',
@@ -105,6 +104,11 @@ const en: Record<string, string> = {
   'stage.20': 'Paper Draft',
   'stage.21': 'Peer Review',
   'stage.22': 'Paper Revision',
+  'stage.23': 'Quality Gate',
+  'stage.24': 'Knowledge Archive',
+  'stage.25': 'Export & Publish',
+  'stage.26': 'Citation Verify',
+  'stage.100': 'Discussion',
 
   // Repo names
   'repo.knowledge.name': 'Idea Store',
@@ -140,11 +144,11 @@ const en: Record<string, string> = {
   'queue.idle': 'Idle',
   'queue.badge_running': 'Running',
   'queue.badge_waiting': 'Waiting',
-  'queue.stage_idea': 'Research & Ideas',
-  'queue.stage_experiment': 'Experiment Design',
-  'queue.stage_coding': 'Code & Resources',
-  'queue.stage_execution': 'Execution & Refine',
-  'queue.stage_writing': 'Paper Writing',
+  'queue.stage_strategy': 'Strategy',
+  'queue.stage_exploration': 'Exploration',
+  'queue.stage_processing': 'Processing',
+  'queue.stage_inference': 'Inference',
+  'queue.stage_documentation': 'Documentation',
 
   // ResourceMonitor
   'resource.tag': '📈 Resources',
@@ -170,8 +174,8 @@ const en: Record<string, string> = {
   'discussion.on': 'Discussion',
   'discussion.off': 'Independent',
   'discussion.dialog_title': 'Discussion Mode vs Independent Mode',
-  'discussion.dialog_body': '【Discussion Mode (Recommended)】\nMultiple direction agents each complete S1-S7 (research → synthesis), then pause. Once all are ready, a cross-direction discussion is triggered to produce a consensus synthesis. Each agent then generates hypotheses (S8), and the best direction is selected for downstream experiments.\n✅ Integrates multiple perspectives, higher quality hypotheses\n✅ Avoids duplicate research\n\n【Independent Mode】\nEach direction agent runs S1-S8 independently without communication. Each generates hypotheses and proceeds to downstream experiments separately.\n⚡ Faster (no synchronization wait)\n⚠️ Directions may overlap, no consensus integration\n\nNote: In both modes, the Knowledge Base and Experiment Results are always shared across agents.',
-  'discussion.hint_on': 'Cross-direction discussion after S7 → consensus hypothesis',
+  'discussion.dialog_body': '【Discussion Mode (Recommended)】\nMultiple direction agents each complete Phase 2 steps 2.1–2.5 (search → synthesis), then pause. Once all are ready, a cross-direction discussion is triggered to produce a consensus synthesis. Each agent then generates hypotheses (2.6), and the best direction is selected for downstream experiments.\n✅ Integrates multiple perspectives, higher quality hypotheses\n✅ Avoids duplicate research\n\n【Independent Mode】\nEach direction agent runs Phase 2 independently without communication. Each generates hypotheses and proceeds to downstream experiments separately.\n⚡ Faster (no synchronization wait)\n⚠️ Directions may overlap, no consensus integration\n\nNote: In both modes, the Knowledge Base and Experiment Results are always shared across agents.',
+  'discussion.hint_on': 'Cross-direction discussion after 2.5 Synthesis → consensus hypothesis',
   'discussion.hint_off': 'Each direction generates hypotheses independently, faster but no consensus',
 
   // Language

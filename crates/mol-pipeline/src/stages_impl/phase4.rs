@@ -1,5 +1,5 @@
-//! Phase F: Analysis & Decision — ResultAnalysis, ResearchDecision, and
-//! KnowledgeSummary stage executors.
+//! Phase 4: Inference — ResultAnalysis, ResearchDecision, and
+//! KnowledgeSummary (4.3) stage executors.
 
 use crate::executor::{
     collect_experiment_results, read_prior_artifact_pub, utcnow_iso, StageContext, StageResult,
