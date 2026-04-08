@@ -228,6 +228,13 @@ impl PromptAdapter for GenericPromptAdapter {
         let mut terms = HashMap::new();
         // Map generic pipeline concepts to domain-specific terminology.
         match self.profile.domain {
+            ResearchDomain::HighEnergyPhysics => {
+                terms.insert("condition".into(), "selection / analysis region".into());
+                terms.insert("baseline".into(), "cut-based selection".into());
+                terms.insert("metric".into(), "significance / upper limit".into());
+                terms.insert("method".into(), "analysis strategy".into());
+                terms.insert("trial".into(), "pseudo-experiment".into());
+            }
             ResearchDomain::Economics => {
                 terms.insert("condition".into(), "specification".into());
                 terms.insert("baseline".into(), "OLS regression".into());
@@ -293,6 +300,16 @@ fn paradigm_code_hints(paradigm: &ExperimentParadigm) -> String {
              - Compare against analytical solutions where available."
                 .into()
         }
+        ExperimentParadigm::HepAnalysis => {
+            "HEP analysis paradigm:\n\
+             - Read NTuples with uproot; apply event selection with awkward boolean masks.\n\
+             - Build signal, control, and validation regions with orthogonal cuts.\n\
+             - Estimate backgrounds: data-driven (ABCD, sideband) or MC-driven (with scale factors).\n\
+             - Construct pyhf likelihood with systematic NPs (JES, JER, b-tag SF, luminosity, etc.).\n\
+             - Apply blinding: use Asimov data for expected results until unblinding approved.\n\
+             - All plots: mplhep style, no titles, axis labels with units, sqrt(s) + luminosity."
+                .into()
+        }
         _ => String::new(),
     }
 }
@@ -319,6 +336,16 @@ fn paradigm_analysis_hints(paradigm: &ExperimentParadigm) -> String {
              - Verify conservation laws are respected.\n\
              - Report energy/momentum drift over the trajectory.\n\
              - Compare trajectories qualitatively and quantitatively."
+                .into()
+        }
+        ExperimentParadigm::HepAnalysis => {
+            "For HEP analysis results:\n\
+             - Report observed and expected upper limits (CLs method).\n\
+             - Show ±1σ and ±2σ expected limit bands (Brazil plot).\n\
+             - Report nuisance parameter pulls and constraints.\n\
+             - Show pre-fit and post-fit yields per region.\n\
+             - Verify background model closure in validation regions.\n\
+             - Report signal efficiency × acceptance vs. signal hypothesis."
                 .into()
         }
         _ => String::new(),
@@ -422,6 +449,23 @@ mod tests {
         let adapter = GenericPromptAdapter::new(profile);
         let terms = adapter.get_condition_terminology();
         assert_eq!(terms.get("condition"), Some(&"specification".to_string()));
+    }
+
+    #[test]
+    fn hep_adapter_includes_pyhf_hints() {
+        let profile = crate::profile::load_profile(ResearchDomain::HighEnergyPhysics);
+        let adapter = GenericPromptAdapter::new(profile);
+        let blocks = adapter.get_prompt_blocks(PromptContext::CodeGeneration);
+        assert!(blocks.code_generation_hints.contains("uproot"));
+        assert!(blocks.code_generation_hints.contains("pyhf"));
+    }
+
+    #[test]
+    fn hep_condition_terminology() {
+        let profile = crate::profile::load_profile(ResearchDomain::HighEnergyPhysics);
+        let adapter = GenericPromptAdapter::new(profile);
+        let terms = adapter.get_condition_terminology();
+        assert_eq!(terms.get("baseline"), Some(&"cut-based selection".to_string()));
     }
 
     #[test]

@@ -21,6 +21,73 @@ pub struct DomainKeywords {
 pub fn domain_keywords() -> HashMap<ResearchDomain, DomainKeywords> {
     let mut m = HashMap::new();
 
+    // ── High Energy Physics (highest priority — project identity) ──────────
+    m.insert(
+        ResearchDomain::HighEnergyPhysics,
+        DomainKeywords {
+            keywords: &[
+                // experiments & collaborations
+                "atlas", "cms", "lhcb", "alice", "belle ii", "belle2",
+                "babar", "cdf", "d0", "delphi", "aleph", "opal", "l3",
+                "cern", "lhc", "tevatron", "slac", "fermilab", "desy",
+                "kek", "ihep", "bes iii", "besiii",
+                // physics processes
+                "higgs", "diboson", "dimuon", "dielectron", "diphoton",
+                "top quark", "b-physics", "cp violation", "bsm",
+                "supersymmetry", "susy", "dark matter", "wimp",
+                "extra dimensions", "z boson", "w boson", "z prime",
+                "heavy ion", "quark-gluon plasma", "qgp",
+                "parton distribution", "pdf set",
+                "cross-section", "cross section",
+                "branching ratio", "decay width",
+                "luminosity", "integrated luminosity",
+                "pile-up", "pileup",
+                // analysis techniques
+                "event selection", "signal region", "control region",
+                "validation region", "sideband", "blinding",
+                "unfolding", "unfolded", "detector-level", "particle-level",
+                "background estimation", "fake factor", "abcd method",
+                "template fit", "profile likelihood",
+                "cls", "cl_s", "exclusion limit", "upper limit",
+                "discovery significance", "look-elsewhere",
+                "nuisance parameter", "systematic uncertainty",
+                "trigger efficiency", "scale factor",
+                "jet energy scale", "jet energy resolution",
+                "b-tagging", "b-tag", "flavour tagging",
+                "missing transverse", "missing et", "etmiss",
+                // detector objects
+                "calorimeter", "tracking detector", "muon spectrometer",
+                "electromagnetic shower", "hadronic shower",
+                "pseudorapidity", "rapidity",
+                "transverse momentum", "pt cut",
+                // tools & frameworks
+                "uproot", "awkward-array", "awkward array",
+                "pyhf", "histfactory", "hist factory",
+                "fastjet", "delphes", "rivet", "yoda",
+                "madgraph", "mg5", "powheg", "sherpa", "herwig",
+                "pythia", "geant4", "root", "root file",
+                "mplhep", "hepdata",
+                "xrootd", "eos",
+                // data formats
+                "ntuple", "n-tuple", "miniAOD", "nanoAOD", "xAOD",
+                "ttree", "tbranch",
+                // ML in HEP (should match HEP, not generic ML)
+                "jet tagging", "jet classification",
+                "particle flow", "graph neural network for jets",
+                "parameterised neural network",
+            ],
+            venues: &[
+                "JHEP", "Physical Review D", "Physical Review Letters",
+                "European Physical Journal C", "EPJC",
+                "Physics Letters B", "PLB",
+                "Nuclear Instruments and Methods", "NIM",
+                "Journal of Instrumentation", "JINST",
+                "Computer Physics Communications",
+                "CHEP", "ACAT",
+            ],
+        },
+    );
+
     m.insert(
         ResearchDomain::MachineLearning,
         DomainKeywords {
@@ -335,21 +402,24 @@ pub fn domain_keywords() -> HashMap<ResearchDomain, DomainKeywords> {
 /// Returns [`ResearchDomain::Generic`] when nothing matches.
 ///
 /// Detection priority (most specific → least specific):
-/// 1. Security — highly specific vocabulary
-/// 2. Robotics
-/// 3. Economics
-/// 4. Chemistry
-/// 5. Biology
-/// 6. Physics
-/// 7. Mathematics
-/// 8. Engineering
-/// 9. MachineLearning — broad catch-all for ML
-/// 10. Generic (fallback)
+/// 1. HighEnergyPhysics — project identity, most specific vocabulary
+/// 2. Security — highly specific vocabulary
+/// 3. Robotics
+/// 4. Economics
+/// 5. Chemistry
+/// 6. Biology
+/// 7. Physics
+/// 8. Mathematics
+/// 9. Engineering
+/// 10. MachineLearning — broad catch-all for ML
+/// 11. Generic (fallback)
 pub fn detect_domain(topic: &str) -> ResearchDomain {
     let lower = topic.to_lowercase();
 
     // Fixed priority order so more-specific domains win over broad ones.
+    // HEP is first — it's the project's primary domain.
     let priority: &[ResearchDomain] = &[
+        ResearchDomain::HighEnergyPhysics,
         ResearchDomain::Security,
         ResearchDomain::Robotics,
         ResearchDomain::Economics,
@@ -405,6 +475,8 @@ pub fn detect_domain_with_llm(topic: &str, llm_response: &str) -> ResearchDomain
 
     // Prefix → ResearchDomain mapping (mirrors Python profile ids).
     let prefix_map: &[(&str, ResearchDomain)] = &[
+        ("hep_", ResearchDomain::HighEnergyPhysics),
+        ("hep", ResearchDomain::HighEnergyPhysics),
         ("ml_", ResearchDomain::MachineLearning),
         ("ml_generic", ResearchDomain::MachineLearning),
         ("physics_", ResearchDomain::Physics),
@@ -426,6 +498,11 @@ pub fn detect_domain_with_llm(topic: &str, llm_response: &str) -> ResearchDomain
 
     // Also check display-name fragments.
     let name_map: &[(&str, ResearchDomain)] = &[
+        ("high energy physics", ResearchDomain::HighEnergyPhysics),
+        ("particle physics", ResearchDomain::HighEnergyPhysics),
+        ("collider physics", ResearchDomain::HighEnergyPhysics),
+        ("hep-ex", ResearchDomain::HighEnergyPhysics),
+        ("hep-ph", ResearchDomain::HighEnergyPhysics),
         ("machine learning", ResearchDomain::MachineLearning),
         ("deep learning", ResearchDomain::MachineLearning),
         ("physics", ResearchDomain::Physics),
@@ -456,6 +533,50 @@ pub fn detect_domain_with_llm(topic: &str, llm_response: &str) -> ResearchDomain
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_hep_from_atlas() {
+        assert_eq!(detect_domain("ATLAS search for di-Higgs production"), ResearchDomain::HighEnergyPhysics);
+    }
+
+    #[test]
+    fn detects_hep_from_pyhf() {
+        assert_eq!(detect_domain("Statistical inference with pyhf for exclusion limits"), ResearchDomain::HighEnergyPhysics);
+    }
+
+    #[test]
+    fn detects_hep_from_jet_tagging() {
+        assert_eq!(detect_domain("Jet tagging with graph neural networks at CMS"), ResearchDomain::HighEnergyPhysics);
+    }
+
+    #[test]
+    fn detects_hep_from_unfolding() {
+        assert_eq!(detect_domain("Unfolding differential cross-section measurements"), ResearchDomain::HighEnergyPhysics);
+    }
+
+    #[test]
+    fn llm_assist_parses_hep_prefix() {
+        assert_eq!(
+            detect_domain_with_llm("some topic", "hep_collider"),
+            ResearchDomain::HighEnergyPhysics,
+        );
+        assert_eq!(
+            detect_domain_with_llm("some topic", "hep"),
+            ResearchDomain::HighEnergyPhysics,
+        );
+    }
+
+    #[test]
+    fn llm_assist_parses_hep_name() {
+        assert_eq!(
+            detect_domain_with_llm("some topic", "high energy physics"),
+            ResearchDomain::HighEnergyPhysics,
+        );
+        assert_eq!(
+            detect_domain_with_llm("some topic", "particle physics"),
+            ResearchDomain::HighEnergyPhysics,
+        );
+    }
 
     #[test]
     fn detects_ml_from_pytorch() {

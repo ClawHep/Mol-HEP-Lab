@@ -19,6 +19,7 @@ pub mod adapters;
 pub mod codebase_manifest;
 pub mod data;
 pub mod hardware;
+pub mod hep;
 pub mod prompts;
 pub mod quality;
 pub mod sanitize;

@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchDomain {
+    HighEnergyPhysics,
     MachineLearning,
     Physics,
     Chemistry,
@@ -26,6 +27,7 @@ impl ResearchDomain {
     /// Return a human-readable display name.
     pub fn display_name(&self) -> &'static str {
         match self {
+            Self::HighEnergyPhysics => "High Energy Physics",
             Self::MachineLearning => "Machine Learning",
             Self::Physics => "Computational Physics",
             Self::Chemistry => "Computational Chemistry",
@@ -42,6 +44,7 @@ impl ResearchDomain {
     /// Return the canonical domain_id prefix used in the Python profiles.
     pub fn domain_prefix(&self) -> &'static str {
         match self {
+            Self::HighEnergyPhysics => "hep",
             Self::MachineLearning => "ml",
             Self::Physics => "physics",
             Self::Chemistry => "chemistry",
@@ -76,6 +79,8 @@ pub enum ExperimentParadigm {
     Simulation,
     /// Systematic removal of components.
     AblationStudy,
+    /// HEP analysis: event selection → background estimation → statistical inference.
+    HepAnalysis,
 }
 
 impl ExperimentParadigm {
@@ -86,6 +91,7 @@ impl ExperimentParadigm {
             Self::ProgressiveSpec => "progressive_spec",
             Self::Simulation => "simulation",
             Self::AblationStudy => "ablation_study",
+            Self::HepAnalysis => "hep_analysis",
         }
     }
 }
@@ -227,6 +233,7 @@ impl DomainProfile {
 /// Profiles are built statically — no file-system I/O is required at runtime.
 pub fn load_profile(domain: ResearchDomain) -> DomainProfile {
     match domain {
+        ResearchDomain::HighEnergyPhysics => hep_profile(),
         ResearchDomain::MachineLearning => ml_profile(),
         ResearchDomain::Physics => physics_profile(),
         ResearchDomain::Chemistry => chemistry_profile(),
@@ -243,6 +250,62 @@ pub fn load_profile(domain: ResearchDomain) -> DomainProfile {
 // ---------------------------------------------------------------------------
 // Per-domain static profile builders
 // ---------------------------------------------------------------------------
+
+fn hep_profile() -> DomainProfile {
+    DomainProfile {
+        domain: ResearchDomain::HighEnergyPhysics,
+        domain_id: "hep_collider".into(),
+        display_name: "High Energy Physics".into(),
+        paradigm: ExperimentParadigm::HepAnalysis,
+        default_metrics: vec![
+            DomainMetric::new("significance", MetricType::HigherBetter, "Discovery significance (σ)", "σ"),
+            DomainMetric::new("cls_upper_limit", MetricType::LowerBetter, "95% CL upper limit on signal strength", ""),
+            DomainMetric::new("cross_section", MetricType::LowerBetter, "Measured cross-section uncertainty", "pb"),
+            DomainMetric::new("signal_efficiency", MetricType::HigherBetter, "Signal selection efficiency", "%"),
+            DomainMetric::new("background_rejection", MetricType::HigherBetter, "Background rejection factor", ""),
+        ],
+        benchmarks: vec![
+            "Cut-based selection".into(),
+            "BDT (XGBoost)".into(),
+            "DNN classifier".into(),
+            "GNN (particle-level)".into(),
+        ],
+        docker_image: "researchmol/sandbox-hep:latest".into(),
+        pip_packages: vec![
+            "uproot".into(),
+            "awkward".into(),
+            "hist".into(),
+            "boost-histogram".into(),
+            "pyhf".into(),
+            "cabiern".into(),
+            "fastjet".into(),
+            "vector".into(),
+            "mplhep".into(),
+            "matplotlib".into(),
+            "xgboost".into(),
+            "scikit-learn".into(),
+            "numpy".into(),
+            "scipy".into(),
+        ],
+        suggested_frameworks: vec![
+            "uproot + awkward (data I/O)".into(),
+            "hist (histogramming)".into(),
+            "pyhf (statistical inference)".into(),
+            "fastjet (jet clustering)".into(),
+            "mplhep (ATLAS/CMS style plots)".into(),
+            "xgboost / PyTorch (MVA)".into(),
+        ],
+        experiment_templates: vec![
+            "Read NTuples with uproot; manipulate with awkward arrays.".into(),
+            "Apply staged blinding: Asimov data for expected results, 10% partial, then full.".into(),
+            "Construct pyhf workspace: signal + background channels with systematic NPs.".into(),
+            "Run CLs exclusion or discovery significance with pyhf.".into(),
+            "All plots must use mplhep with experiment style (ATLAS/CMS/LHCb).".into(),
+            "Report cutflow tables, N-1 distributions, fit diagnostics.".into(),
+        ],
+        gpu_required: false,
+    }
+}
 
 fn ml_profile() -> DomainProfile {
     DomainProfile {

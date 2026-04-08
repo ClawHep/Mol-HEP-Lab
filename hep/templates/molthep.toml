@@ -1,0 +1,46 @@
+[daemon]
+host = "127.0.0.1"
+port = 42617
+status_poll_interval_s = 5
+
+[executors]
+enabled = ["api"]  # Default: use API directly. Add "claude_code", "codex", "local_llm" if available.
+
+[executors.api]
+default_model = "anthropic/claude-sonnet-4"
+
+[executors.claude_code]
+command = "claude"
+args = ["--dangerously-skip-permissions"]
+
+[executors.codex]
+command = "codex"
+
+[executors.local_llm]
+provider = "ollama"
+model = "qwen2.5-coder:32b"
+
+[models]
+planner = "anthropic/claude-opus-4"
+executor = "anthropic/claude-sonnet-4"
+reviewer = "anthropic/claude-opus-4"
+
+# API keys — set here or via environment variables (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)
+# [api_keys]
+# anthropic = "sk-ant-..."
+# openai = "sk-..."
+# openrouter = "sk-or-..."
+
+[models.phase_overrides]
+
+[notifications]
+channels = ["web_ui"]
+
+[genome]
+auto_branch = true
+leaderboard_file = "LEADERBOARD.md"
+
+[timeouts]
+executor_phase_timeout_s = 1800
+review_timeout_s = 600
+health_check_interval_s = 60

@@ -65,6 +65,19 @@ impl DomainAdapter for DomainAdapterImpl {
 
     fn experiment_prompt_overlay(&self) -> String {
         match self.profile.domain {
+            ResearchDomain::HighEnergyPhysics => {
+                "## Experiment Design (High Energy Physics)\n\
+                 Paradigm: HEP analysis — event selection → background estimation → statistical inference.\n\
+                 - Define signal and control regions with orthogonal selections.\n\
+                 - Estimate backgrounds using data-driven methods (ABCD, sideband, template fit) or MC with scale factors.\n\
+                 - Construct pyhf workspace with all systematic uncertainties as nuisance parameters.\n\
+                 - Apply staged blinding: Asimov data → 10% partial unblinding → full unblinding.\n\
+                 - Run CLs exclusion test or discovery significance calculation.\n\
+                 - Report cutflow tables, N-1 distributions, fit diagnostics (pulls, impacts, ranking).\n\
+                 - All plots must use mplhep with experiment style (ATLAS/CMS/LHCb).\n\
+                 - Cross-reference applicable conventions (extraction/search/unfolding) for required systematics."
+                    .into()
+            }
             ResearchDomain::MachineLearning => {
                 "## Experiment Design (Machine Learning)\n\
                  Paradigm: comparison — baseline vs proposed method vs ablations.\n\
@@ -158,6 +171,21 @@ impl DomainAdapter for DomainAdapterImpl {
 
     fn code_generation_hints(&self) -> String {
         match self.profile.domain {
+            ResearchDomain::HighEnergyPhysics => {
+                "## Code Generation Hints (High Energy Physics)\n\
+                 Core libraries: uproot, awkward, hist, pyhf, fastjet, mplhep, xgboost\n\
+                 1. Read ROOT files with uproot; manipulate arrays with awkward.\n\
+                 2. Histogram with hist/boost-histogram; fill with weighted events.\n\
+                 3. Apply object selections: pT, eta, ID, isolation cuts via awkward boolean masks.\n\
+                 4. For MVA: use xgboost BDT as default; only escalate to DNN if BDT plateaus.\n\
+                 5. Build pyhf workspace: {\"channels\": [...], \"observations\": [...], \"measurements\": [...]}.\n\
+                 6. Run CLs: pyhf.infer.hypotest(poi, workspace, return_expected_set=True).\n\
+                 7. All plots: import mplhep; mplhep.style.use('ATLAS') or 'CMS'.\n\
+                 8. No plot titles; axis labels with units; sqrt(s) and luminosity on every plot.\n\
+                 9. Save figures as PDF + PNG; always call plt.close().\n\
+                 10. Output results.json with signal_efficiency, background_yield, cls_upper_limit."
+                    .into()
+            }
             ResearchDomain::MachineLearning => {
                 "## Code Generation Hints (Machine Learning)\n\
                  1. Use PyTorch or scikit-learn; follow the train/eval loop pattern.\n\
