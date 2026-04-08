@@ -1,0 +1,61 @@
+project:
+  name: "__PROJECT_ID__"
+  mode: "full-auto"
+
+research:
+  topic: "__TOPIC__"
+  domains:
+    - "deep-learning"
+  daily_paper_count: 5
+  quality_threshold: 3.0
+  reference_papers: __REFERENCE_PAPERS__
+
+notifications:
+  channel: "console"
+  on_stage_start: true
+  on_gate_required: true
+
+knowledge_base:
+  backend: "markdown"
+  root: "docs/kb"
+
+openmol_bridge:
+  use_message: false
+  use_memory: false
+  use_web_fetch: false
+
+llm:
+  provider: "openai-compatible"
+  base_url: "http://www.longcatcloud.com/v1"
+  api_key: "__API_KEY__"
+  api_key_env: "RESEARCHMOL_API_KEY"
+  primary_model: "gpt-5.4"
+  coding_model: "gpt-5.4"
+  image_model: "gemini-3-pro-image-preview"
+  fallback_models:
+    - "qwen3.5-plus"
+    - "qwen-plus"
+
+security:
+  hitl_required_stages: []
+
+experiment:
+  mode: "sandbox"
+  time_budget_sec: 2400
+  max_iterations: 3
+  metric_key: "primary_metric"
+  metric_direction: "minimize"
+  datasets_dir: ""
+  checkpoints_dir: ""
+  codebases_dir: ""
+  shared_results_dir: "runs/shared_results"
+  paper_length: "long"
+  sandbox:
+    python_path: "__PYTHON_PATH__"
+  sanity_check_max_iterations: 100
+
+runtime:
+  timezone: "Asia/Shanghai"
+
+prompts:
+  custom_file: ""

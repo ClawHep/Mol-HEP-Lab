@@ -1,0 +1,85 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/mol-cli",
+    "crates/mol-common",
+    "crates/mol-config",
+    "crates/mol-llm",
+    "crates/mol-pipeline",
+    "crates/mol-engine",
+    "crates/mol-experiment",
+    "crates/mol-literature",
+    "crates/mol-web",
+    "crates/mol-domains",
+    "crates/mol-knowledge",
+    "crates/mol-templates",
+    "crates/mol-agents",
+    "crates/mol-metamol",
+    "crates/mol-services",
+    "crates/mol-health",
+    "crates/mol-evolution",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/Mol-HEP-Lab/Mol-HEP-Lab"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+dashmap = "6"
+tera = "1"
+regex = "1"
+walkdir = "2"
+glob = "0.3"
+sysinfo = "0.32"
+nvml-wrapper = "0.10"
+bollard = "0.18"
+ssh2 = "0.9"
+lopdf = "0.34"
+tempfile = "3"
+num_enum = "0.7"
+async-trait = "0.1"
+url = "2"
+which = "7"
+scraper = "0.22"
+quick-xml = "0.37"
+git2 = "0.20"
+plotters = "0.3"
+md-5 = "0.10"
+base64 = "0.22"
+
+# Internal crate dependencies
+mol-common = { path = "crates/mol-common" }
+mol-config = { path = "crates/mol-config" }
+mol-llm = { path = "crates/mol-llm" }
+mol-pipeline = { path = "crates/mol-pipeline" }
+mol-engine = { path = "crates/mol-engine" }
+mol-experiment = { path = "crates/mol-experiment" }
+mol-literature = { path = "crates/mol-literature" }
+mol-web = { path = "crates/mol-web" }
+mol-domains = { path = "crates/mol-domains" }
+mol-knowledge = { path = "crates/mol-knowledge" }
+mol-templates = { path = "crates/mol-templates" }
+mol-agents = { path = "crates/mol-agents" }
+mol-metamol = { path = "crates/mol-metamol" }
+mol-services = { path = "crates/mol-services" }
+mol-health = { path = "crates/mol-health" }
+mol-evolution = { path = "crates/mol-evolution" }

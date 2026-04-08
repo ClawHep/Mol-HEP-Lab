@@ -1,0 +1,40 @@
+[package]
+name = "mol-cli"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "mol"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+axum = { workspace = true }
+axum-extra = { workspace = true }
+tower-http = { workspace = true }
+chrono = { workspace = true }
+walkdir = { workspace = true }
+which = { workspace = true }
+mol-common = { workspace = true }
+mol-config = { workspace = true }
+mol-llm = { workspace = true }
+mol-pipeline = { workspace = true }
+mol-engine = { workspace = true }
+mol-experiment = { workspace = true }
+mol-literature = { workspace = true }
+mol-web = { workspace = true }
+mol-domains = { workspace = true }
+mol-knowledge = { workspace = true }
+mol-templates = { workspace = true }
+mol-agents = { workspace = true }
+mol-metamol = { workspace = true }
+mol-services = { workspace = true }
+mol-health = { workspace = true }
+mol-evolution = { workspace = true }

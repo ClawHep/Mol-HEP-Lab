@@ -1,0 +1,21 @@
+[package]
+name = "mol-literature"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+quick-xml = { workspace = true }
+mol-common = { workspace = true }
+mol-llm = { workspace = true }
+regex = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
