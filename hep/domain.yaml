@@ -1,0 +1,77 @@
+## HEP Domain Profile
+## Read by ChainBackedAdapter to construct DomainProfile at runtime.
+
+domain: high_energy_physics
+domain_id: hep_collider
+display_name: "High Energy Physics"
+paradigm: hep_analysis
+gpu_required: false
+
+docker_image: "researchmol/sandbox-hep:latest"
+
+default_metrics:
+  - name: significance
+    metric_type: higher_better
+    description: "Discovery significance (σ)"
+    unit: "σ"
+  - name: cls_upper_limit
+    metric_type: lower_better
+    description: "95% CL upper limit on signal strength"
+    unit: ""
+  - name: cross_section
+    metric_type: lower_better
+    description: "Measured cross-section uncertainty"
+    unit: "pb"
+  - name: signal_efficiency
+    metric_type: higher_better
+    description: "Signal selection efficiency"
+    unit: "%"
+  - name: background_rejection
+    metric_type: higher_better
+    description: "Background rejection factor"
+    unit: ""
+
+benchmarks:
+  - "Cut-based selection"
+  - "BDT (XGBoost)"
+  - "DNN classifier"
+  - "GNN (particle-level)"
+
+pip_packages:
+  - uproot
+  - awkward
+  - hist
+  - boost-histogram
+  - pyhf
+  - cabiern
+  - fastjet
+  - vector
+  - mplhep
+  - matplotlib
+  - xgboost
+  - scikit-learn
+  - numpy
+  - scipy
+
+suggested_frameworks:
+  - "uproot + awkward (data I/O)"
+  - "hist (histogramming)"
+  - "pyhf (statistical inference)"
+  - "fastjet (jet clustering)"
+  - "mplhep (ATLAS/CMS style plots)"
+  - "xgboost / PyTorch (MVA)"
+
+experiment_templates:
+  - "Read NTuples with uproot; manipulate with awkward arrays."
+  - "Apply staged blinding: Asimov data for expected results, 10% partial, then full."
+  - "Construct pyhf workspace: signal + background channels with systematic NPs."
+  - "Run CLs exclusion or discovery significance with pyhf."
+  - "All plots must use mplhep with experiment style (ATLAS/CMS/LHCb)."
+  - "Report cutflow tables, N-1 distributions, fit diagnostics."
+
+condition_terminology:
+  condition: "selection / analysis region"
+  baseline: "cut-based selection"
+  metric: "significance / upper limit"
+  method: "analysis strategy"
+  trial: "pseudo-experiment"

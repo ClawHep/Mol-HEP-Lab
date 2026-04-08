@@ -1,0 +1,16 @@
+## HEP datasets configuration
+## Injected into templates as {{ datasets }}
+
+datasets:
+  - name: "ATLAS Open Data 13 TeV"
+    url: "https://opendata.atlas.cern/docs/data/samples/overview"
+    format: ROOT
+    description: "ATLAS experiment open data samples at 13 TeV"
+  - name: "CMS Open Data"
+    url: "https://opendata.cern.ch/search?experiment=CMS"
+    format: ROOT/NanoAOD
+    description: "CMS experiment open data in NanoAOD format"
+  - name: "HEPData"
+    url: "https://www.hepdata.net"
+    format: YAML/ROOT
+    description: "Published HEP measurement data and likelihoods"
