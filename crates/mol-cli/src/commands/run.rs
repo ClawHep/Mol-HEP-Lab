@@ -139,6 +139,19 @@ pub async fn execute(args: RunArgs) -> Result<()> {
     println!();
 
     // Build the executor's MolConfig from the full config
+    let knowledge_chain = {
+        let roots: Vec<std::path::PathBuf> =
+            if let Some(ref chain) = full_config.research.knowledge_chain {
+                chain.iter().map(std::path::PathBuf::from).collect()
+            } else {
+                vec![
+                    std::path::PathBuf::from(&full_config.research.knowledge_root),
+                    std::path::PathBuf::from("generic"),
+                ]
+            };
+        mol_common::KnowledgeChain::new(roots)
+    };
+
     let executor_config = mol_pipeline::executor::MolConfig {
         topic: topic.clone(),
         settings: std::collections::HashMap::new(),
@@ -149,7 +162,7 @@ pub async fn execute(args: RunArgs) -> Result<()> {
             .cloned()
             .unwrap_or_else(|| "hep".to_owned()),
         analysis_type: full_config.research.analysis_type.clone(),
-        knowledge_root: std::path::PathBuf::from(&full_config.research.knowledge_root),
+        knowledge_chain,
     };
 
     // Build pipeline config

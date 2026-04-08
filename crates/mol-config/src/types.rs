@@ -113,6 +113,10 @@ pub struct ResearchConfig {
     /// Root of domain knowledge tree (agents/, conventions/, methodology/, templates/).
     #[serde(default = "defaults::hep_string")]
     pub knowledge_root: String,
+    /// Ordered knowledge chain — overrides knowledge_root if set.
+    /// Example: ["hep-cepc", "hep", "generic"]
+    #[serde(default)]
+    pub knowledge_chain: Option<Vec<String>>,
 }
 
 /// Runtime scheduling and parallelism knobs.

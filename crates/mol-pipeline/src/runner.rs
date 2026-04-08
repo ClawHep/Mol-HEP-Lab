@@ -163,21 +163,28 @@ pub async fn execute_pipeline_with_llm(
 
     // Load the prompt engine once at pipeline start.
     let prompt_engine: Option<Arc<StagePromptEngine>> = {
-        let templates_dir = config.knowledge_root.join("templates/stages");
-        match StagePromptEngine::load(&templates_dir) {
-            Ok(engine) => {
-                info!("Loaded stage templates from {}", templates_dir.display());
-                Some(Arc::new(engine))
+        match config.knowledge_chain.templates_dir() {
+            Some(templates_dir) => {
+                match StagePromptEngine::load(&templates_dir) {
+                    Ok(engine) => {
+                        info!("Loaded stage templates from {}", templates_dir.display());
+                        Some(Arc::new(engine))
+                    }
+                    Err(e) => {
+                        warn!("Failed to load stage templates: {}", e);
+                        None
+                    }
+                }
             }
-            Err(e) => {
-                warn!("Failed to load stage templates from {}: {}", templates_dir.display(), e);
+            None => {
+                warn!("No templates/stages directory found in knowledge chain");
                 None
             }
         }
     };
 
     // Load domain contract overrides (if any).
-    let contract_overrides = crate::contracts::ContractOverrides::load(&config.knowledge_root);
+    let contract_overrides = crate::contracts::ContractOverrides::load(&config.knowledge_chain);
 
     let t_start = Instant::now();
     let total_stages = STAGE_SEQUENCE.len();
@@ -556,11 +563,12 @@ pub async fn execute_iterative_pipeline(
     max_iterations: u32,
 ) -> Result<Vec<StageResult>> {
     let llm: Option<std::sync::Arc<dyn mol_llm::LlmProvider>> = None;
-    let prompt_engine: Option<Arc<StagePromptEngine>> = {
-        let templates_dir = config.knowledge_root.join("templates/stages");
-        StagePromptEngine::load(&templates_dir).ok().map(Arc::new)
-    };
-    let contract_overrides = crate::contracts::ContractOverrides::load(&config.knowledge_root);
+    let prompt_engine: Option<Arc<StagePromptEngine>> = config
+        .knowledge_chain
+        .templates_dir()
+        .and_then(|d| StagePromptEngine::load(&d).ok())
+        .map(Arc::new);
+    let contract_overrides = crate::contracts::ContractOverrides::load(&config.knowledge_chain);
     let iterative_stages = [
         Stage::ExperimentRun,
         Stage::IterativeRefine,

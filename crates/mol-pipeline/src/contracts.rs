@@ -7,9 +7,9 @@
 
 use crate::stages::Stage;
 use anyhow::{bail, Result};
+use mol_common::KnowledgeChain;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // StageContract
@@ -43,20 +43,19 @@ struct ContractOverridesFile {
 }
 
 impl ContractOverrides {
-    /// Load contract overrides from `{knowledge_root}/contracts.yaml`.
-    /// Returns empty overrides if the file is missing or unreadable.
-    pub fn load(knowledge_root: &Path) -> Self {
-        let path = knowledge_root.join("contracts.yaml");
-        let text = match std::fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(_) => return Self::default(),
+    /// Load contract overrides from `contracts.yaml` in the knowledge chain.
+    /// Returns empty overrides if no layer has the file.
+    pub fn load(chain: &KnowledgeChain) -> Self {
+        let text = match chain.read_first("contracts.yaml") {
+            Some(t) => t,
+            None => return Self::default(),
         };
         match serde_yaml::from_str::<ContractOverridesFile>(&text) {
             Ok(file) => Self {
                 overrides: file.overrides,
             },
             Err(e) => {
-                tracing::warn!(path = %path.display(), error = %e, "failed to parse contracts.yaml");
+                tracing::warn!(error = %e, "failed to parse contracts.yaml from knowledge chain");
                 Self::default()
             }
         }
@@ -349,6 +348,7 @@ pub fn validate_outputs(stage: Stage, produced: &[String], overrides: Option<&Co
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mol_common::KnowledgeChain;
 
     #[test]
     fn all_stages_have_contracts() {
@@ -402,7 +402,8 @@ overrides:
       - custom_criteria
 "#;
         std::fs::write(dir.path().join("contracts.yaml"), yaml).unwrap();
-        let overrides = ContractOverrides::load(dir.path());
+        let chain = KnowledgeChain::new(vec![dir.path().to_owned()]);
+        let overrides = ContractOverrides::load(&chain);
         let contract = overrides.get(Stage::ExperimentDesign);
         assert!(contract.is_some());
         let c = contract.unwrap();
@@ -412,7 +413,8 @@ overrides:
     #[test]
     fn contract_overrides_missing_file_returns_empty() {
         let dir = tempfile::TempDir::new().unwrap();
-        let overrides = ContractOverrides::load(dir.path());
+        let chain = KnowledgeChain::new(vec![dir.path().to_owned()]);
+        let overrides = ContractOverrides::load(&chain);
         assert!(overrides.get(Stage::TopicInit).is_none());
     }
 
@@ -426,7 +428,8 @@ overrides:
       - custom_output
 "#;
         std::fs::write(dir.path().join("contracts.yaml"), yaml).unwrap();
-        let overrides = ContractOverrides::load(dir.path());
+        let chain = KnowledgeChain::new(vec![dir.path().to_owned()]);
+        let overrides = ContractOverrides::load(&chain);
         let contract = get_contract(Stage::TopicInit, Some(&overrides));
         assert!(contract.expected_outputs.contains(&"custom_output".to_owned()));
     }

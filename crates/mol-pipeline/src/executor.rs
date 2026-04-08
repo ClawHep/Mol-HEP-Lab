@@ -7,6 +7,7 @@
 
 use crate::stages::{Stage, StageStatus};
 use anyhow::{Context, Result};
+use mol_common::KnowledgeChain;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -31,9 +32,8 @@ pub struct MolConfig {
     pub domain: String,
     /// Analysis type within the domain (e.g. "extraction", "search", "measurement").
     pub analysis_type: Option<String>,
-    /// Root of domain knowledge tree (agents/, conventions/, methodology/, templates/).
-    /// Defaults to `"hep"`.
-    pub knowledge_root: PathBuf,
+    /// Layered knowledge chain — ordered most-specific to most-general.
+    pub knowledge_chain: KnowledgeChain,
 }
 
 impl Default for MolConfig {
@@ -43,7 +43,10 @@ impl Default for MolConfig {
             settings: HashMap::new(),
             domain: "hep".to_owned(),
             analysis_type: None,
-            knowledge_root: PathBuf::from("hep"),
+            knowledge_chain: KnowledgeChain::new(vec![
+                PathBuf::from("hep"),
+                PathBuf::from("generic"),
+            ]),
         }
     }
 }
@@ -161,36 +164,6 @@ impl StageResult {
 }
 
 // ---------------------------------------------------------------------------
-// Stage-Agent mapping
-// ---------------------------------------------------------------------------
-
-/// Map each pipeline stage to its primary HEP agent definition.
-///
-/// Returns the agent filename stem (e.g. `"lead-analyst"`) which resolves to
-/// `{knowledge_root}/agents/{name}.md`. Discussion returns `None` as it is a
-/// multi-agent stage with its own template.
-pub fn agent_for_stage(stage: Stage) -> Option<&'static str> {
-    match stage {
-        Stage::TopicInit | Stage::ProblemDecompose => Some("lead-analyst"),
-        Stage::SearchStrategy | Stage::LiteratureCollect
-        | Stage::LiteratureScreen | Stage::KnowledgeExtract => Some("investigator"),
-        Stage::Synthesis => Some("theory-scout"),
-        Stage::HypothesisGen => Some("lead-analyst"),
-        Stage::ExperimentDesign | Stage::ResourcePlanning => Some("lead-analyst"),
-        Stage::CodebaseSearch | Stage::CodeGeneration | Stage::ExperimentRun => Some("signal-lead"),
-        Stage::SanityCheck => Some("cross-checker"),
-        Stage::IterativeRefine => Some("systematics-fitter"),
-        Stage::ResultAnalysis | Stage::KnowledgeSummary => Some("lead-analyst"),
-        Stage::ResearchDecision => Some("arbiter"),
-        Stage::PaperOutline | Stage::PaperDraft | Stage::PaperRevision => Some("note-writer"),
-        Stage::PeerReview => Some("physics-reviewer"),
-        Stage::QualityGate => Some("arbiter"),
-        Stage::KnowledgeArchive | Stage::ExportPublish | Stage::CitationVerify => Some("note-writer"),
-        Stage::Discussion => None,
-    }
-}
-
-// ---------------------------------------------------------------------------
 // StageContext
 // ---------------------------------------------------------------------------
 
@@ -236,14 +209,9 @@ impl StageContext {
         self.run_dir.join(format!("stage-{:02}", stage.as_i32()))
     }
 
-    /// Resolve a path within the domain knowledge tree.
-    fn knowledge_path(&self, relative: &str) -> PathBuf {
-        self.config.knowledge_root.join(relative)
-    }
-
-    /// Read a file from the knowledge tree. Returns `None` if missing.
+    /// Read a file from the knowledge chain. Returns `None` if missing.
     fn read_knowledge(&self, relative: &str) -> Option<String> {
-        std::fs::read_to_string(self.knowledge_path(relative)).ok()
+        self.config.knowledge_chain.read_first(relative)
     }
 
     /// Build the template variable map for rendering stage prompts.
@@ -289,11 +257,16 @@ impl StageContext {
         // --- Domain knowledge injection ---
 
         // Agent role: inject the matched agent's markdown body (frontmatter stripped)
-        if let Some(agent_name) = agent_for_stage(stage) {
+        let agent_mapping = crate::knowledge::AgentMapping::load(&self.config.knowledge_chain);
+        if let Some(agent_name) = agent_mapping.agent_for(stage) {
             if let Some(raw) = self.read_knowledge(&format!("agents/{agent_name}.md")) {
                 vars.insert("agent_role".into(), strip_frontmatter(&raw).to_owned());
             }
         }
+
+        // Datasets
+        let datasets = crate::knowledge::DatasetsConfig::load(&self.config.knowledge_chain);
+        vars.insert("datasets".into(), datasets.to_template_string());
 
         // Conventions: inject by analysis_type (extraction, search, unfolding)
         let analysis_type = self.config.analysis_type.as_deref().unwrap_or("general");
@@ -1491,6 +1464,7 @@ pub async fn execute_stage(stage: Stage, context: &StageContext) -> Result<Stage
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mol_common::KnowledgeChain;
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -1746,6 +1720,10 @@ mod tests {
             kr.join("agents/lead-analyst.md"),
             "---\nname: lead-analyst\n---\n\n# Lead Analyst\nYou are the lead.",
         ).unwrap();
+        std::fs::write(
+            kr.join("agents.yaml"),
+            "stage_agents:\n  TOPIC_INIT: lead-analyst\n",
+        ).unwrap();
         std::fs::create_dir_all(kr.join("conventions")).unwrap();
         std::fs::write(kr.join("conventions/search.md"), "# Search Conventions\nBlah.").unwrap();
         std::fs::create_dir_all(kr.join("methodology")).unwrap();
@@ -1758,7 +1736,7 @@ mod tests {
                 topic: "jet tagging".into(),
                 domain: "hep".into(),
                 analysis_type: Some("search".into()),
-                knowledge_root: kr,
+                knowledge_chain: KnowledgeChain::new(vec![kr]),
                 ..Default::default()
             },
             prior_artifacts: HashMap::new(),
@@ -1792,16 +1770,4 @@ mod tests {
         assert_eq!(strip_frontmatter(""), "");
     }
 
-    #[test]
-    fn agent_for_stage_covers_all_variants() {
-        use crate::stages::STAGE_SEQUENCE;
-        for &stage in STAGE_SEQUENCE {
-            let _ = agent_for_stage(stage);
-        }
-        assert!(agent_for_stage(Stage::Discussion).is_none());
-        assert_eq!(agent_for_stage(Stage::TopicInit), Some("lead-analyst"));
-        assert_eq!(agent_for_stage(Stage::CodeGeneration), Some("signal-lead"));
-        assert_eq!(agent_for_stage(Stage::PeerReview), Some("physics-reviewer"));
-        assert_eq!(agent_for_stage(Stage::ResearchDecision), Some("arbiter"));
-    }
 }

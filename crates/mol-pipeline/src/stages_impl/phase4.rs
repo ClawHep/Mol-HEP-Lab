@@ -237,7 +237,7 @@ mod tests {
                 settings: HashMap::new(),
                 domain: "hep".to_owned(),
                 analysis_type: None,
-                knowledge_root: std::path::PathBuf::from("hep"),
+                knowledge_chain: mol_common::KnowledgeChain::new(vec![std::path::PathBuf::from("hep"), std::path::PathBuf::from("generic")]),
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: true,
