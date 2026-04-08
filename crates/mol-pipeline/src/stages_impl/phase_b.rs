@@ -24,6 +24,68 @@ pub async fn execute_search_strategy(stage: Stage, ctx: &StageContext) -> StageR
     let queries = build_fallback_queries(topic);
 
     // ---- search_plan.yaml --------------------------------------------------
+    // Try LLM first; fall back to template if empty.
+    let llm_plan = crate::executor::llm_generate(
+        ctx,
+        "You are a systematic literature search strategist for scientific research.",
+        &format!(
+            "Generate a comprehensive search plan in YAML format for the research topic:\n\n{}\n\n\
+             Include: search strategies (keyword, citation snowballing, author search), \
+             year filters, document type filters, and deduplication settings.",
+            topic
+        ),
+        false,
+    )
+    .await;
+    if !llm_plan.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("search_plan.yaml"), &llm_plan) {
+            return StageResult::failure(stage, format!("write search_plan.yaml: {e}"));
+        }
+        // Still write sources.json and queries.json from template
+        let sources_json = serde_json::json!([
+            {"id": "arxiv", "name": "arXiv", "url": "https://arxiv.org",
+             "api_endpoint": "https://export.arxiv.org/api/query", "enabled": true,
+             "categories": ["cs.LG", "cs.AI", "stat.ML", "physics", "q-bio"]},
+            {"id": "semantic_scholar", "name": "Semantic Scholar",
+             "url": "https://www.semanticscholar.org",
+             "api_endpoint": "https://api.semanticscholar.org/graph/v1", "enabled": true},
+            {"id": "pubmed", "name": "PubMed", "url": "https://pubmed.ncbi.nlm.nih.gov",
+             "api_endpoint": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", "enabled": false}
+        ]);
+        if let Err(e) = fs::write(
+            stage_dir.join("sources.json"),
+            serde_json::to_string_pretty(&sources_json).unwrap_or_default(),
+        ) {
+            return StageResult::failure(stage, format!("write sources.json: {e}"));
+        }
+        let queries_json: Vec<serde_json::Value> = queries
+            .iter()
+            .enumerate()
+            .map(|(i, q)| serde_json::json!({"id": format!("q{:02}", i + 1), "query": q,
+                "source": "auto-generated", "priority": if i < 3 { "high" } else { "medium" }}))
+            .collect();
+        let queries_json_wrapper = serde_json::json!({"generated_at": utcnow_iso(),
+            "topic": topic, "queries": queries_json});
+        if let Err(e) = fs::write(
+            stage_dir.join("queries.json"),
+            serde_json::to_string_pretty(&queries_json_wrapper).unwrap_or_default(),
+        ) {
+            return StageResult::failure(stage, format!("write queries.json: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec![
+                "search_plan.yaml".to_owned(),
+                "sources.json".to_owned(),
+                "queries.json".to_owned(),
+            ],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     let queries_yaml: String = queries
         .iter()
         .map(|q| format!("  - \"{}\"", q.replace('"', "\\\"")))
@@ -172,6 +234,34 @@ pub async fn execute_literature_collect(stage: Stage, ctx: &StageContext) -> Sta
 
     let topic = ctx.config.topic.as_str();
     let now = utcnow_iso();
+
+    // Try LLM to generate candidate papers as JSONL; fall back to template.
+    let llm_candidates = crate::executor::llm_generate(
+        ctx,
+        "You are a research librarian collecting scientific literature.",
+        &format!(
+            "Generate 5 representative placeholder paper records as JSONL (one JSON object per line) \
+             for the research topic: {}\n\n\
+             Each record must have fields: paper_id, title, authors (array), year, venue, abstract, \
+             url, citations (int), relevance_score (0.0-1.0), source.",
+            topic
+        ),
+        false,
+    )
+    .await;
+    if !llm_candidates.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("candidates.jsonl"), &llm_candidates) {
+            return StageResult::failure(stage, format!("write candidates.jsonl: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["candidates.jsonl".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
 
     // Generate placeholder candidate papers as JSONL
     let candidates = vec![
@@ -413,6 +503,43 @@ pub async fn execute_knowledge_extract(stage: Stage, ctx: &StageContext) -> Stag
         crate::executor::read_prior_artifact_pub(&ctx.run_dir, "screened_papers.jsonl")
             .unwrap_or_default();
 
+    // Try LLM to generate knowledge cards JSON; fall back to template.
+    let llm_cards = crate::executor::llm_generate(
+        ctx,
+        "You are a scientific knowledge extraction specialist.",
+        &format!(
+            "Extract structured knowledge cards from the following screened papers for topic: {}\n\n\
+             Screened papers (JSONL):\n{}\n\n\
+             Return a JSON object with fields: topic, extracted_at, total_cards, cards (array). \
+             Each card: card_id, paper_id, title, authors, year, key_contributions (array), \
+             key_findings, limitations (array), relevance_tags (array).",
+            topic,
+            if screened_text.is_empty() { "(no screened papers available)" } else { &screened_text }
+        ),
+        true,
+    )
+    .await;
+    if !llm_cards.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("knowledge_cards.json"), &llm_cards) {
+            return StageResult::failure(stage, format!("write knowledge_cards.json: {e}"));
+        }
+        let citation_map = serde_json::json!({"topic": topic, "nodes": [], "edges": []});
+        if let Err(e) = fs::write(
+            stage_dir.join("citation_map.json"),
+            serde_json::to_string_pretty(&citation_map).unwrap_or_default(),
+        ) {
+            return StageResult::failure(stage, format!("write citation_map.json: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["knowledge_cards.json".to_owned(), "citation_map.json".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     let mut knowledge_cards: Vec<serde_json::Value> = Vec::new();
     let mut citation_edges: Vec<serde_json::Value> = Vec::new();
 
@@ -555,6 +682,7 @@ mod tests {
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: true,
+            llm: None,
         }
     }
 

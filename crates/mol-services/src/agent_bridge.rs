@@ -23,7 +23,8 @@ use std::{
     },
     time::{SystemTime, UNIX_EPOCH},
 };
-use tokio::sync::{broadcast, RwLock};
+use std::sync::RwLock;
+use tokio::sync::broadcast;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -48,7 +49,7 @@ pub fn stage_to_layer(stage: u32) -> Option<&'static str> {
 /// Stage numbers per layer.
 pub fn layer_stages(layer: &str) -> &'static [u32] {
     match layer {
-        "idea" => &[1, 2, 3, 4, 5, 6, 7, 8],
+        "idea" => &[1, 2, 3, 4, 5, 6, 7, 100, 8],
         "experiment" => &[9],
         "coding" => &[10, 11, 12, 13],
         "execution" => &[14, 15, 16, 17, 18],
@@ -357,6 +358,17 @@ impl TaskQueue {
     }
 }
 
+/// Stored when an agent is waiting for human approval at a layer boundary.
+#[derive(Debug, Clone)]
+pub struct PendingTransition {
+    pub output_queue: String,
+    pub project_id: String,
+    pub run_dir: String,
+    pub config_path: String,
+    pub topic: String,
+    pub source_layer: String,
+}
+
 /// Tracks a group of L1 agents in a discussion.
 #[derive(Debug)]
 pub struct DiscussionGroup {
@@ -502,6 +514,8 @@ pub enum AgentStatus {
     Done,
     WaitingDiscussion,
     Discussing,
+    /// Agent paused at a layer boundary, waiting for human review/approval.
+    WaitingHumanReview,
 }
 
 impl MolAgent {
@@ -551,7 +565,8 @@ impl MolAgent {
             "layer": self.layer,
             "runId": self.run_id,
             "status": format!("{:?}", self.status).to_lowercase()
-                       .replace("waitingdiscussion", "waiting_discussion"),
+                       .replace("waitingdiscussion", "waiting_discussion")
+                       .replace("waitinghumanreview", "waiting_human_review"),
             "currentStage": self.current_stage,
             "currentTask": self.current_task,
             "stageProgress": progress,
@@ -604,6 +619,8 @@ pub struct BridgeState {
     pub fail_counts: DashMap<String, u32>,
     /// Lab mode: project_id → expected agent count for discussion batches.
     pub lab_batches: DashMap<String, usize>,
+    /// Agents waiting for human approval: agent_id → pending transition info.
+    pub pending_transitions: DashMap<String, PendingTransition>,
     // Configuration
     pub python_path: String,
     pub agent_package_dir: String,
@@ -632,15 +649,25 @@ impl BridgeState {
         discussion_models: Vec<String>,
     ) -> Arc<Self> {
         let (tx, _rx) = broadcast::channel(4096);
+        let queues: DashMap<String, TaskQueue> = DashMap::new();
+        let queues_dir = PathBuf::from(&runs_base_dir).join("queues");
+        let _ = std::fs::create_dir_all(&queues_dir);
+        for &queue_name in all_queue_names() {
+            let queue_path = queues_dir.join(queue_name);
+            let mut q = TaskQueue::new(queue_name, queue_path);
+            q.load(); // restore any persisted tasks from disk
+            queues.insert(queue_name.to_string(), q);
+        }
         Arc::new(Self {
             agents: DashMap::new(),
-            queues: DashMap::new(),
+            queues,
             broadcast_tx: tx,
             gpu_allocator: std::sync::Mutex::new(GpuAllocator::new(total_gpus, gpus_per_project)),
             discussion_groups: DashMap::new(),
             discussion_waiting: DashMap::new(),
             fail_counts: DashMap::new(),
             lab_batches: DashMap::new(),
+            pending_transitions: DashMap::new(),
             python_path,
             agent_package_dir,
             runs_base_dir,
@@ -1026,6 +1053,25 @@ fn create_agent(state: &BridgeState, name: &str, layer: &str) -> String {
     id
 }
 
+/// Create a default pool of agents so tasks submitted immediately have workers.
+///
+/// Creates one agent per pipeline layer: idea, experiment, coding, execution,
+/// writing.  Without these, `schedule_idle_agents` would find no idle workers
+/// and tasks would queue up indefinitely.
+pub fn create_default_agents(state: &Arc<BridgeState>) {
+    let defaults = [
+        ("Researcher-1", "idea"),
+        ("Experiment-1", "experiment"),
+        ("Coder-1", "coding"),
+        ("Runner-1", "execution"),
+        ("Writer-1", "writing"),
+    ];
+    for (name, layer) in &defaults {
+        create_agent(state, name, layer);
+    }
+    info!("Created {} default agents", defaults.len());
+}
+
 fn assign_task_to_agent(agent: &mut MolAgent, task: &Task) {
     agent.project_id = task.project_id.clone();
     agent.run_dir = task.run_dir.clone();
@@ -1148,17 +1194,35 @@ fn build_agent_cmd(
     let log_path = PathBuf::from(run_dir).join(format!("agent_{}.log", agent.id));
     let log_file = std::fs::File::create(&log_path)?;
 
-    let mut cmd = Command::new(&state.python_path);
-    cmd.arg("-m")
-        .arg("researchmol")
-        .arg("run")
-        .arg("--config").arg(config_path)
-        .arg("--output").arg(run_dir)
-        .arg("--from-stage").arg(stage_name(from_stage))
-        .arg("--to-stage").arg(stage_name(to_stage))
-        .arg("--auto-approve")
-        .arg("--skip-preflight")
-        .current_dir(&state.agent_package_dir)
+    // Prefer Rust `mol` binary if available, otherwise fall back to Python
+    let mol_bin = std::env::current_exe().ok()
+        .and_then(|p| p.parent().map(|d| d.join("mol")))
+        .filter(|p| p.exists());
+
+    let mut cmd = if let Some(ref mol_path) = mol_bin {
+        let mut c = Command::new(mol_path);
+        c.arg("run")
+            .arg("--config").arg(config_path)
+            .arg("--output").arg(run_dir)
+            .arg("--from-stage").arg(stage_name(from_stage))
+            .arg("--to-stage").arg(stage_name(to_stage))
+            .arg("--auto-approve")
+            .arg("--skip-preflight");
+        c
+    } else {
+        let mut c = Command::new(&state.python_path);
+        c.arg("-m")
+            .arg("researchclaw")
+            .arg("run")
+            .arg("--config").arg(config_path)
+            .arg("--output").arg(run_dir)
+            .arg("--from-stage").arg(stage_name(from_stage))
+            .arg("--to-stage").arg(stage_name(to_stage))
+            .arg("--auto-approve")
+            .arg("--skip-preflight");
+        c
+    };
+    cmd.current_dir(&state.agent_package_dir)
         .stdout(log_file.try_clone()?)
         .stderr(Stdio::from(log_file))
         .env("PYTHONUNBUFFERED", "1");
@@ -1239,7 +1303,8 @@ pub fn submit_new_project(
 
     let run_dir_path = state.projects_dir().join(project_id);
     let _ = std::fs::create_dir_all(&run_dir_path);
-    let run_dir = run_dir_path.to_string_lossy().into_owned();
+    // Use absolute path so child processes find it regardless of cwd
+    let run_dir = run_dir_path.canonicalize().unwrap_or(run_dir_path).to_string_lossy().into_owned();
     save_project_meta(&run_dir, project_id, config_path, topic, mode);
 
     if disc_mode {
@@ -1275,6 +1340,9 @@ pub fn submit_new_project(
         };
         if let Some(mut q) = state.queues.get_mut(queue_name) {
             q.push(task);
+        } else {
+            warn!("Queue '{queue_name}' not found — task for project [{project_id}] dropped!");
+            messages.push(msg_log_sys(&format!("ERROR: queue '{queue_name}' missing, task dropped"), "error"));
         }
         messages.push(msg_log_sys(
             &format!("Project [{project_id}] checkpoint detected → resuming from {} (Stage {next_stage})", stage_name(next_stage)),
@@ -1297,6 +1365,9 @@ pub fn submit_new_project(
         };
         if let Some(mut q) = state.queues.get_mut("init_to_idea") {
             q.push(task);
+        } else {
+            warn!("Queue 'init_to_idea' not found — task for project [{project_id}] dropped!");
+            messages.push(msg_log_sys("ERROR: queue 'init_to_idea' missing, task dropped", "error"));
         }
         messages.push(msg_log_sys(
             &format!("New project [{project_id}] added to research queue"),
@@ -1319,7 +1390,7 @@ pub fn list_all_projects(state: &BridgeState) -> Vec<Value> {
         .iter()
         .filter_map(|entry| {
             let a = entry.value();
-            if !a.project_id.is_empty() && a.process.is_some() {
+            if !a.project_id.is_empty() && (a.process.is_some() || a.status == AgentStatus::WaitingHumanReview || a.status == AgentStatus::WaitingDiscussion || a.status == AgentStatus::Discussing) {
                 Some(a.project_id.clone())
             } else {
                 None
@@ -1385,8 +1456,15 @@ pub fn list_all_projects(state: &BridgeState) -> Vec<Value> {
         let last_name = cp.as_ref().and_then(|c| c.get("last_completed_name")).and_then(|v| v.as_str()).unwrap_or("").to_string();
         let timestamp = cp.as_ref().and_then(|c| c.get("timestamp")).and_then(|v| v.as_str()).unwrap_or("").to_string();
 
+        let has_waiting_agent = state.agents.iter().any(|e| {
+            let a = e.value();
+            a.project_id == project_id && a.status == AgentStatus::WaitingHumanReview
+        });
+
         let status = if last_stage >= 22 {
             "completed"
+        } else if has_waiting_agent {
+            "waiting_human_review"
         } else if running_ids.contains(&project_id) {
             "running"
         } else if queued_ids.contains(&project_id) {
@@ -1456,7 +1534,7 @@ fn delete_project(state: &BridgeState, project_id: &str) -> Vec<Value> {
     let mut messages = pause_project(state, project_id);
 
     {
-        let released = state.gpu_allocator.lock().unwrap().release(project_id);
+        let released = state.gpu_allocator.lock().unwrap_or_else(|e| e.into_inner()).release(project_id);
         if !released.is_empty() {
             messages.push(msg_log_sys(&format!("GPU {released:?} released (project deleted)"), "info"));
         }
@@ -1551,7 +1629,7 @@ pub fn trigger_discussion(state: &BridgeState, group_project_id: &str) -> Vec<Va
         }
     }
 
-    let rounds = *state.discussion_rounds.blocking_read();
+    let rounds = *state.discussion_rounds.read().unwrap_or_else(|e| e.into_inner());
     let runner_path = PathBuf::from(&state.runs_base_dir)
         .parent()
         .unwrap_or(Path::new("."))
@@ -1889,6 +1967,8 @@ fn on_discussion_s8_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
         };
         if let Some(mut q) = state.queues.get_mut("idea_to_experiment") {
             q.push(follow_task);
+        } else {
+            warn!("Queue 'idea_to_experiment' not found — follow-up task dropped!");
         }
     }
 
@@ -1954,7 +2034,7 @@ pub fn on_agent_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
     };
 
     // Discussion mode: idea layer → enter discussion after S7
-    let disc_mode = *state.discussion_mode.blocking_read();
+    let disc_mode = *state.discussion_mode.read().unwrap_or_else(|e| e.into_inner());
     let meta = read_project_meta(&run_dir);
     let is_reproduce = meta.as_ref().and_then(|m| m.get("mode")).and_then(|v| v.as_str()) == Some("reproduce");
 
@@ -2059,9 +2139,38 @@ pub fn on_agent_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
             state.discussion_groups.insert(disc_name.clone(), group);
             messages.extend(trigger_discussion(state, &disc_name));
         } else {
-            // No peer: skip discussion
-            messages.push(msg_log_sys("S7 complete, no discussion partner available, skipping to S8", "info"));
-            messages.extend(skip_discussion_proceed_s8(state, agent_id));
+            // No peer: wait for human review instead of skipping
+            // Scan run_dir for key artifacts to show the user
+            let key_files = ["synthesis_report.md", "gap_analysis.json", "knowledge_cards.json", "goal.md", "problem_tree.md"];
+            let mut found_artifacts = Vec::new();
+            for fname in &key_files {
+                for stage_num in 1..=7u32 {
+                    let p = PathBuf::from(&run_dir).join(format!("stage-{stage_num:02}")).join(fname);
+                    if p.exists() {
+                        let size = std::fs::metadata(&p).map(|m| format!("{}B", m.len())).unwrap_or_default();
+                        let content = if fname.ends_with(".md") {
+                            std::fs::read_to_string(&p).unwrap_or_default().chars().take(500).collect::<String>()
+                        } else { String::new() };
+                        messages.push(msg_artifact("knowledge", fname, &project_id, &size, &project_id, &content, Some(stage_num)));
+                        found_artifacts.push(*fname);
+                    }
+                }
+            }
+            let artifacts_hint = if found_artifacts.is_empty() {
+                String::new()
+            } else {
+                format!("\n主要产出: {}", found_artifacts.join(", "))
+            };
+            messages.push(msg_log_sys(
+                &format!("S7 完成，等待人工审阅后继续。请在右侧数据架查看产出，发送反馈后输入「继续」推进到实验层。{artifacts_hint}"),
+                "info",
+            ));
+            if let Some(mut ae) = state.agents.get_mut(agent_id) {
+                let a = ae.value_mut();
+                a.status = AgentStatus::WaitingHumanReview;
+                a.current_task = "想法层完成，等待人工审阅…".to_string();
+                messages.push(msg_agent_update(a));
+            }
         }
         return messages;
     }
@@ -2080,16 +2189,60 @@ pub fn on_agent_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
     if let Some(output_queue_name) = layer_output_queue(&layer) {
         // L4→L5: only if decision.md says PROCEED
         let should_push = if layer == "execution" && output_queue_name == "execution_to_writing" {
-            let dec = PathBuf::from(&run_dir).join("stage-17/decision.md");
-            dec.exists() && {
-                let text = std::fs::read_to_string(&dec).unwrap_or_default().to_uppercase();
-                text.contains("PROCEED")
-            }
+            // Check decision from stage-17 — may be decision.md or decision_record.json
+            let dec_md = PathBuf::from(&run_dir).join("stage-17/decision.md");
+            let dec_json = PathBuf::from(&run_dir).join("stage-17/decision_record.json");
+            let text = if dec_md.exists() {
+                std::fs::read_to_string(&dec_md).unwrap_or_default().to_uppercase()
+            } else if dec_json.exists() {
+                std::fs::read_to_string(&dec_json).unwrap_or_default().to_uppercase()
+            } else {
+                String::new()
+            };
+            text.contains("PROCEED")
         } else {
             true
         };
 
         if should_push {
+            // When discussion mode is on, pause at layer boundaries for human review
+            if disc_mode && !is_reproduce {
+                let layer_cn = match layer.as_str() {
+                    "idea" => "想法层",
+                    "experiment" => "实验层",
+                    "coding" => "编码层",
+                    "execution" => "执行层",
+                    _ => &layer,
+                };
+                messages.push(msg_log_sys(
+                    &format!(
+                        "{layer_cn}完成，等待人工审阅。请查看产出后输入「继续」推进到下一层。"
+                    ),
+                    "info",
+                ));
+                // Store pending transition info so approve can resume it
+                if let Some(mut ae) = state.agents.get_mut(agent_id) {
+                    let a = ae.value_mut();
+                    a.status = AgentStatus::WaitingHumanReview;
+                    a.current_task = format!("{layer_cn}完成，等待人工审阅…");
+                    messages.push(msg_agent_update(a));
+                }
+                // Save the pending transition so approve_waiting_agents can pick it up
+                state.pending_transitions.insert(
+                    agent_id.to_string(),
+                    PendingTransition {
+                        output_queue: output_queue_name.to_string(),
+                        project_id: project_id.clone(),
+                        run_dir: run_dir.clone(),
+                        config_path: config_path.clone(),
+                        topic: topic.clone(),
+                        source_layer: layer.clone(),
+                    },
+                );
+                messages.push(msg_queue_update(state));
+                return messages;
+            }
+
             if let Some((_, target_layer)) = queue_layers(output_queue_name) {
                 let follow_task = Task {
                     id: format!("task-{}", uid()),
@@ -2107,6 +2260,8 @@ pub fn on_agent_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
                 };
                 if let Some(mut q) = state.queues.get_mut(output_queue_name) {
                     q.push(follow_task);
+                } else {
+                    warn!("Queue '{output_queue_name}' not found — follow-up task dropped!");
                 }
                 messages.push(msg_log_sys(
                     &format!("Task complete → project [{project_id}] added to {output_queue_name} queue"),
@@ -2118,7 +2273,7 @@ pub fn on_agent_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
 
     // Release GPU for execution layer
     if layer == "execution" && !project_id.is_empty() {
-        let released = state.gpu_allocator.lock().unwrap().release(&project_id);
+        let released = state.gpu_allocator.lock().unwrap_or_else(|e| e.into_inner()).release(&project_id);
         if !released.is_empty() {
             messages.push(msg_log_sys(&format!("GPU {released:?} released"), "info"));
         }
@@ -2135,7 +2290,7 @@ pub fn on_agent_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
 
 pub fn schedule_idle_agents(state: &BridgeState) -> Vec<Value> {
     let mut messages = Vec::new();
-    let disc_mode = *state.discussion_mode.blocking_read();
+    let disc_mode = *state.discussion_mode.read().unwrap_or_else(|e| e.into_inner());
 
     let agent_ids: Vec<String> = state.agents.iter().map(|e| e.key().clone()).collect();
 
@@ -2148,13 +2303,13 @@ pub fn schedule_idle_agents(state: &BridgeState) -> Vec<Value> {
         if status != AgentStatus::Idle || has_process || assigned.is_some() {
             continue;
         }
-        if matches!(status, AgentStatus::WaitingDiscussion | AgentStatus::Discussing) {
+        if matches!(status, AgentStatus::WaitingDiscussion | AgentStatus::Discussing | AgentStatus::WaitingHumanReview) {
             continue;
         }
 
         // L4: check GPU
         if layer == "execution" {
-            let can = state.gpu_allocator.lock().unwrap().can_allocate();
+            let can = state.gpu_allocator.lock().unwrap_or_else(|e| e.into_inner()).can_allocate();
             if !can { continue; }
         }
 
@@ -2188,7 +2343,7 @@ pub fn schedule_idle_agents(state: &BridgeState) -> Vec<Value> {
 
             // Allocate GPU for execution
             if layer == "execution" {
-                let _ = state.gpu_allocator.lock().unwrap().allocate(&task.project_id);
+                let _ = state.gpu_allocator.lock().unwrap_or_else(|e| e.into_inner()).allocate(&task.project_id);
             }
 
             let Some(mut ae) = state.agents.get_mut(agent_id) else { break 'queue_loop };
@@ -2308,7 +2463,7 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 let config_path = meta.as_ref().and_then(|m| m.get("config_path")).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let topic = meta.as_ref().and_then(|m| m.get("topic")).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let mode = meta.as_ref().and_then(|m| m.get("mode")).and_then(|v| v.as_str()).unwrap_or("lab").to_string();
-                let disc_mode = *state.discussion_mode.read().await;
+                let disc_mode = *state.discussion_mode.read().unwrap_or_else(|e| e.into_inner());
                 state.fail_counts.remove(project_id);
                 messages.extend(submit_new_project(state, project_id, &config_path, &topic, &mode, disc_mode));
                 messages.extend(schedule_idle_agents(state));
@@ -2349,7 +2504,7 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 let config_path = meta.as_ref().and_then(|m| m.get("config_path")).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let topic = meta.as_ref().and_then(|m| m.get("topic")).and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let mode = meta.as_ref().and_then(|m| m.get("mode")).and_then(|v| v.as_str()).unwrap_or("lab").to_string();
-                let disc_mode = *state.discussion_mode.read().await;
+                let disc_mode = *state.discussion_mode.read().unwrap_or_else(|e| e.into_inner());
                 messages.extend(submit_new_project(state, project_id, &config_path, &topic, &mode, disc_mode));
                 messages.extend(schedule_idle_agents(state));
                 messages.push(msg_project_list(list_all_projects(state)));
@@ -2366,11 +2521,27 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
             let content = data.get("content").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
             let target_layer = data.get("targetLayer").and_then(|v| v.as_str()).unwrap_or("all");
             let intent = classify_chat_intent_keywords(&content);
-            if intent == "query" {
+            if intent == "approve" {
+                // Advance all WaitingHumanReview agents
+                let has_waiting = state.agents.iter().any(|e| e.value().status == AgentStatus::WaitingHumanReview);
+                if has_waiting {
+                    messages.extend(approve_waiting_agents(state));
+                    messages.push(msg_feedback_ack(
+                        &format!("ap-{}", uid()),
+                        "✅ 审阅通过，正在推进管线到下一层…",
+                        target_layer,
+                    ));
+                } else {
+                    // No waiting agents — treat as feedback instead
+                    let fb_id = format!("fb-{}", uid());
+                    let (_injected, plan_hint) = inject_feedback(state, &content, target_layer, &fb_id);
+                    messages.push(msg_feedback_ack(&fb_id, &plan_hint, target_layer));
+                }
+            } else if intent == "query" {
                 let summary = build_status_summary(state, target_layer);
                 messages.push(msg_feedback_ack(&format!("qs-{}", uid()), &summary, target_layer));
             } else {
-                // Treat as feedback
+                // Treat as feedback — record but do NOT advance agents
                 let fb_id = format!("fb-{}", uid());
                 messages.push(msg_log_sys(
                     &format!(
@@ -2399,11 +2570,22 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 }
                 _ => Vec::new(),
             };
-            let reference_papers: Vec<String> = data
-                .get("referencePapers")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_default();
+            let reference_papers: Vec<String> = match data.get("referencePapers") {
+                Some(v) if v.is_array() => v
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect(),
+                Some(v) if v.is_string() => v
+                    .as_str()
+                    .unwrap()
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                _ => Vec::new(),
+            };
             let reference_uploads: Vec<Value> = data
                 .get("referenceFiles")
                 .and_then(|v| v.as_array())
@@ -2452,9 +2634,9 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
 
         "set_discussion_mode" => {
             let enabled = data.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-            *state.discussion_mode.write().await = enabled;
+            *state.discussion_mode.write().unwrap_or_else(|e| e.into_inner()) = enabled;
             if let Some(rounds) = data.get("rounds").and_then(|v| v.as_u64()) {
-                *state.discussion_rounds.write().await = rounds as u32;
+                *state.discussion_rounds.write().unwrap_or_else(|e| e.into_inner()) = rounds as u32;
             }
         }
 
@@ -2503,7 +2685,7 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
                 .unwrap_or_else(|| format!("proj-{}", uid()));
             let config_path = data.get("configPath").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let topic = data.get("topic").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let disc_mode = *state.discussion_mode.read().await;
+            let disc_mode = *state.discussion_mode.read().unwrap_or_else(|e| e.into_inner());
             messages.extend(submit_new_project(state, &project_id, &config_path, &topic, "lab", disc_mode));
             messages.extend(schedule_idle_agents(state));
             messages.push(msg_project_list(list_all_projects(state)));
@@ -2517,17 +2699,32 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
         }
 
         "get_shared_results" => {
-            // Result registry summary (placeholder — returns empty summary when no registry)
-            messages.push(msg_system("{}"));
+            let results_dir = PathBuf::from(&state.runs_base_dir).join("shared_results");
+            let summary = if results_dir.exists() {
+                let mut entries = Vec::new();
+                if let Ok(rd) = std::fs::read_dir(&results_dir) {
+                    for entry in rd.flatten() {
+                        if entry.path().extension().map_or(false, |e| e == "json") {
+                            if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                                entries.push(content);
+                            }
+                        }
+                    }
+                }
+                format!("{{\"count\":{},\"entries\":[{}]}}", entries.len(), entries.join(","))
+            } else {
+                "{}".to_string()
+            };
+            messages.push(msg_system(&summary));
         }
 
         "start_idea_factory" => {
             let topic = data.get("topic").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let config_path = data.get("configPath").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let idea_count = data.get("ideaCount").and_then(|v| v.as_i64()).unwrap_or(0);
-            *state.idea_factory_topic.write().await = topic.clone();
-            *state.idea_factory_config.write().await = config_path;
-            *state.idea_factory_remaining.write().await = idea_count;
+            *state.idea_factory_topic.write().unwrap_or_else(|e| e.into_inner()) = topic.clone();
+            *state.idea_factory_config.write().unwrap_or_else(|e| e.into_inner()) = config_path;
+            *state.idea_factory_remaining.write().unwrap_or_else(|e| e.into_inner()) = idea_count;
             state.idea_factory_produced.store(0, Ordering::Relaxed);
             let label = if idea_count == -1 { "无限".to_string() } else { idea_count.to_string() };
             messages.push(msg_log_sys(
@@ -2537,7 +2734,7 @@ async fn handle_command(state: &Arc<BridgeState>, data: Value) -> Vec<Value> {
         }
 
         "stop_idea_factory" => {
-            *state.idea_factory_remaining.write().await = 0;
+            *state.idea_factory_remaining.write().unwrap_or_else(|e| e.into_inner()) = 0;
             let produced = state.idea_factory_produced.load(Ordering::Relaxed);
             messages.push(msg_log_sys(
                 &format!("Idea 工厂已停止 (已产出 {} 个)", produced),
@@ -2626,7 +2823,7 @@ fn inject_feedback(
         .filter(|e| {
             let a = e.value();
             !a.run_dir.is_empty()
-                && (a.status == AgentStatus::Working || a.status == AgentStatus::Idle)
+                && matches!(a.status, AgentStatus::Working | AgentStatus::Idle | AgentStatus::WaitingHumanReview | AgentStatus::WaitingDiscussion)
                 && (target_layer == "all" || a.layer == target_layer)
                 && !a.project_id.is_empty()
         })
@@ -2641,7 +2838,7 @@ fn inject_feedback(
         if a.run_dir.is_empty() {
             continue;
         }
-        if a.status != AgentStatus::Working && a.status != AgentStatus::Idle {
+        if !matches!(a.status, AgentStatus::Working | AgentStatus::Idle | AgentStatus::WaitingHumanReview | AgentStatus::WaitingDiscussion) {
             continue;
         }
         if target_layer != "all" && a.layer != target_layer {
@@ -2711,6 +2908,9 @@ fn build_status_summary(state: &BridgeState, _target_layer: &str) -> String {
             "done" | "completed" => "已完成",
             "error" | "failed" => "错误",
             "paused" => "已暂停",
+            "waiting_human_review" => "等待审阅",
+            "waiting_discussion" => "等待讨论",
+            "discussing" => "讨论中",
             other => other,
         };
         let stage = p["lastCompletedStage"].as_u64().unwrap_or(0);
@@ -2725,6 +2925,69 @@ fn build_status_summary(state: &BridgeState, _target_layer: &str) -> String {
         lines.push(format!("项目 {pid}：{status_cn}（阶段 {stage}/22，{layer_name}）"));
     }
     lines.join("\n")
+}
+
+/// Advance all agents in WaitingHumanReview state.
+///
+/// For agents with a stored pending transition, create the follow-up task
+/// so the pipeline proceeds to the next layer. For agents waiting at the
+/// discussion gate (no pending transition), skip discussion and proceed to S8.
+fn approve_waiting_agents(state: &BridgeState) -> Vec<Value> {
+    let mut messages = Vec::new();
+
+    let waiting_ids: Vec<String> = state
+        .agents
+        .iter()
+        .filter(|e| e.value().status == AgentStatus::WaitingHumanReview)
+        .map(|e| e.key().clone())
+        .collect();
+
+    if waiting_ids.is_empty() {
+        messages.push(msg_log_sys("当前没有等待审阅的任务。", "info"));
+        return messages;
+    }
+
+    for agent_id in &waiting_ids {
+        if let Some((_k, pt)) = state.pending_transitions.remove(agent_id) {
+            // Layer boundary transition: create follow-up task
+            if let Some((_, target_layer)) = queue_layers(&pt.output_queue) {
+                let follow_task = Task {
+                    id: format!("task-{}", uid()),
+                    project_id: pt.project_id.clone(),
+                    run_dir: pt.run_dir.clone(),
+                    config_path: pt.config_path.clone(),
+                    topic: pt.topic.clone(),
+                    source_layer: pt.source_layer.clone(),
+                    target_layer: target_layer.to_string(),
+                    status: TaskStatus::Pending,
+                    assigned_to: None,
+                    created_at: now_ms(),
+                    assigned_at: 0,
+                    completed_at: 0,
+                };
+                if let Some(mut q) = state.queues.get_mut(&pt.output_queue) {
+                    q.push(follow_task);
+                }
+                messages.push(msg_log_sys(
+                    &format!("人工审阅通过 → 项目 [{}] 推进到 {target_layer} 层", pt.project_id),
+                    "success",
+                ));
+            }
+            // Reset agent to idle so it can pick up the new task
+            if let Some(mut ae) = state.agents.get_mut(agent_id) {
+                ae.value_mut().reset_idle();
+                messages.push(msg_agent_update(ae.value()));
+            }
+        } else {
+            // Discussion gate: skip discussion and proceed to S8
+            messages.extend(skip_discussion_proceed_s8(state, agent_id));
+            messages.push(msg_log_sys("人工审阅通过 → 跳过讨论，推进到实验层", "success"));
+        }
+    }
+
+    messages.push(msg_queue_update(state));
+    messages.extend(schedule_idle_agents(state));
+    messages
 }
 
 fn is_safe_path_component(s: &str) -> bool {
@@ -2909,7 +3172,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<BridgeState>) {
 
 pub fn build_router(state: Arc<BridgeState>) -> Router {
     Router::new()
-        .route("/ws", get(ws_handler))
+        .route("/ws/agents", get(ws_handler))
         .with_state(state)
 }
 
@@ -2929,6 +3192,20 @@ pub fn build_router(state: Arc<BridgeState>) -> Router {
 /// Returns "query" or "feedback".
 pub fn classify_chat_intent_keywords(text: &str) -> &'static str {
     let lower = text.to_lowercase();
+
+    // Check for approve/proceed intent first — highest priority
+    let approve_keywords_cn = ["继续", "通过", "批准", "下一步", "推进", "开始", "确认"];
+    let approve_keywords_en = ["continue", "proceed", "approve", "lgtm", "go ahead", "next", "ok"];
+    for kw in &approve_keywords_cn {
+        if text.contains(kw) {
+            return "approve";
+        }
+    }
+    for kw in &approve_keywords_en {
+        if lower.contains(kw) {
+            return "approve";
+        }
+    }
 
     let query_keywords_cn = [
         "状态", "进度", "进展", "情况", "怎么", "如何", "多少", "哪些", "什么", "完成",
@@ -2981,7 +3258,9 @@ pub fn classify_chat_intent_keywords(text: &str) -> &'static str {
         feedback_score += 2;
     }
 
-    if query_score >= feedback_score {
+    // Default to feedback unless there's a clear query signal.
+    // Short messages with no keywords should be treated as feedback, not query.
+    if query_score > 0 && query_score > feedback_score {
         "query"
     } else {
         "feedback"
@@ -3207,6 +3486,7 @@ pub fn generate_config_from_template(
                 .parent()
                 .unwrap_or(std::path::Path::new("."))
                 .join("config_template.yaml"),
+            PathBuf::from("examples/config_template.yaml"),
         ];
         candidates
             .into_iter()
@@ -3218,17 +3498,26 @@ pub fn generate_config_from_template(
         .map_err(|e| anyhow::anyhow!("配置生成失败: {e}"))?;
 
     // Replace simple placeholders
-    let papers_yaml = reference_papers
-        .iter()
-        .map(|p| format!("  - \"{}\"", p.replace('"', "\\\"")))
-        .collect::<Vec<_>>()
-        .join("\n");
+    // For reference_papers, replace the ENTIRE line (matching Python behavior):
+    //   template: "  reference_papers: __REFERENCE_PAPERS__"
+    //   output:   "  reference_papers:\n    - \"paper1\"\n    - \"paper2\""
+    // or if empty: "  reference_papers: []"
+    let papers_replacement = if reference_papers.is_empty() {
+        "  reference_papers: []".to_string()
+    } else {
+        let yaml_list = reference_papers
+            .iter()
+            .map(|p| format!("    - \"{}\"", p.replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("  reference_papers:\n{yaml_list}")
+    };
 
     let mut config_text = template_text
         .replace("__PROJECT_ID__", project_id)
         .replace("__TOPIC__", topic)
         .replace("__ROLE_PROMPT__", role_prompt)
-        .replace("__REFERENCE_PAPERS__", &papers_yaml);
+        .replace("  reference_papers: __REFERENCE_PAPERS__", &papers_replacement);
 
     // Update path overrides with regex
     let path_updates = [
@@ -3254,7 +3543,10 @@ pub fn generate_config_from_template(
     std::fs::write(&out_path, &config_text)
         .map_err(|e| anyhow::anyhow!("配置生成失败: {e}"))?;
 
-    Ok(out_path.to_string_lossy().into_owned())
+    // Return canonical (absolute) path so child processes can find it
+    // regardless of their working directory
+    let abs_path = out_path.canonicalize().unwrap_or(out_path);
+    Ok(abs_path.to_string_lossy().into_owned())
 }
 
 // ---------------------------------------------------------------------------
@@ -3313,11 +3605,13 @@ pub fn persist_reference_uploads(project_dir: &Path, reference_uploads: &[Value]
     let mut saved_paths = Vec::new();
     for upload in reference_uploads {
         let filename = upload
-            .get("filename")
+            .get("name")
+            .or_else(|| upload.get("filename"))
             .and_then(|v| v.as_str())
             .unwrap_or("upload.pdf");
         let data_b64 = upload
-            .get("data")
+            .get("contentBase64")
+            .or_else(|| upload.get("data"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
@@ -3440,7 +3734,7 @@ pub fn quick_submit_project(
     let datasets_dir = path_overrides.get("datasets_dir").map(|s| s.as_str()).unwrap_or("");
     let checkpoints_dir = path_overrides.get("checkpoints_dir").map(|s| s.as_str()).unwrap_or("");
 
-    let disc_mode = *state.discussion_mode.blocking_read();
+    let disc_mode = *state.discussion_mode.read().unwrap_or_else(|e| e.into_inner());
 
     match mode {
         "reproduce" => {
@@ -3518,7 +3812,7 @@ pub fn quick_submit_project(
                     String::new()
                 });
 
-                let run_dir = sub_dir.to_string_lossy().into_owned();
+                let run_dir = sub_dir.canonicalize().unwrap_or(sub_dir.clone()).to_string_lossy().into_owned();
                 save_project_meta(&run_dir, project_id, &config_path, &angled_topic, "lab");
 
                 let task = Task {
@@ -3538,10 +3832,20 @@ pub fn quick_submit_project(
 
                 if let Some(mut q) = state.queues.get_mut("init_to_idea") {
                     q.push(task);
+                    messages.push(msg_log_sys(
+                        &format!("研究方向 [{angle}] 已加入队列 (sub_id={sub_id})"),
+                        "info",
+                    ));
+                } else {
+                    warn!("Queue 'init_to_idea' not found — task for angle [{angle}] dropped!");
+                    messages.push(msg_log_sys(
+                        &format!("ERROR: 队列 init_to_idea 未找到, 方向 [{angle}] 任务丢失"),
+                        "error",
+                    ));
                 }
 
                 messages.push(msg_log_sys(
-                    &format!("研究方向 [{angle}] 已加入队列 (sub_id={sub_id})"),
+                    &format!("研究方向 [{angle}] 已提交 (sub_id={sub_id})"),
                     "info",
                 ));
             }
@@ -3559,14 +3863,21 @@ pub fn quick_submit_project(
 // Idea factory stubs
 // ---------------------------------------------------------------------------
 
-/// Called when an idea-factory agent completes all stages. Not yet fully implemented.
-pub fn _on_idea_factory_done(_state: &BridgeState, _agent_id: &str) -> Vec<Value> {
-    Vec::new()
+/// Called when an idea-factory agent completes all stages.
+///
+/// Falls through to `on_agent_done` so the agent is properly reset to idle
+/// and follow-up tasks are scheduled.
+pub fn _on_idea_factory_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
+    info!("Idea factory agent [{agent_id}] completed — routing to on_agent_done");
+    on_agent_done(state, agent_id)
 }
 
-/// Called when an idea-factory S7-only agent finishes. Not yet fully implemented.
-pub fn _on_idea_factory_s7_done(_state: &BridgeState, _agent_id: &str) -> Vec<Value> {
-    Vec::new()
+/// Called when an idea-factory S7-only agent finishes.
+///
+/// Falls through to `on_agent_done` for proper cleanup.
+pub fn _on_idea_factory_s7_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
+    info!("Idea factory S7 agent [{agent_id}] completed — routing to on_agent_done");
+    on_agent_done(state, agent_id)
 }
 
 // ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@
 pub mod acp;
 pub mod anthropic;
 pub mod client;
+pub mod provider;
 pub mod response;
 pub mod retry;
 
@@ -41,6 +42,7 @@ pub mod retry;
 pub use acp::{ACPClient, ACPConfig};
 pub use anthropic::AnthropicAdapter;
 pub use client::{LLMClient, LLMClientConfig, Message, NEW_PARAM_MODELS, RESPONSES_API_MODELS};
+pub use provider::{create_provider, CliProvider, LlmProvider};
 pub use response::{LLMResponse, PreflightResult};
 
 // ---------------------------------------------------------------------------

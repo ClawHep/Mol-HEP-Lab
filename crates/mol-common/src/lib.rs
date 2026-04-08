@@ -17,6 +17,7 @@
 
 pub mod adapters;
 pub mod codebase_manifest;
+pub mod data;
 pub mod hardware;
 pub mod prompts;
 pub mod quality;

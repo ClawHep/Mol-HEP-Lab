@@ -86,24 +86,33 @@ pub async fn execute(args: RunArgs) -> Result<()> {
     let config_path = resolve_config(args.config.as_ref())?;
     tracing::info!("Using config: {}", config_path.display());
 
-    // Load config YAML for topic / mode
+    // Load full typed config
     let config_text = std::fs::read_to_string(&config_path)?;
-    let config: serde_yaml::Value = serde_yaml::from_str(&config_text)?;
+    let full_config: mol_config::MolConfig = serde_yaml::from_str(&config_text)?;
 
     let topic = args.topic.clone().unwrap_or_else(|| {
-        config["research"]["topic"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string()
+        full_config.research.topic.clone()
     });
 
-    let mode = config["project"]["mode"].as_str().unwrap_or("full-auto").to_string();
+    // Create LLM provider (API → CLI → None)
+    let provider = mol_llm::create_provider(&full_config);
+    match &provider {
+        Some(p) => println!("LLM provider: {}", p.name()),
+        None => println!("LLM provider: none (fallback templates)"),
+    }
 
     // LLM preflight
     if !args.skip_preflight {
-        print!("Preflight check... ");
-        // Preflight stub — real implementation delegates to mol-llm
-        println!("OK (stub)");
+        if let Some(ref p) = provider {
+            print!("Preflight check... ");
+            match p.preflight().await {
+                Ok(msg) => println!("{msg}"),
+                Err(e) => {
+                    println!("WARN: {e}");
+                    tracing::warn!("LLM preflight failed: {e}");
+                }
+            }
+        }
     }
 
     let run_id = generate_run_id(&topic);
@@ -117,7 +126,6 @@ pub async fn execute(args: RunArgs) -> Result<()> {
     println!("  Run ID:  {run_id}");
     println!("  Topic:   {topic}");
     println!("  Output:  {}", run_dir.display());
-    println!("  Mode:    {mode}");
 
     if let Some(ref from) = args.from_stage {
         println!("  From:    {from}");
@@ -130,9 +138,53 @@ pub async fn execute(args: RunArgs) -> Result<()> {
     }
     println!();
 
-    // Pipeline execution stub — delegates to mol-pipeline at runtime
-    tracing::info!(run_id, topic, mode, "pipeline ready — executor not yet wired");
-    println!("Pipeline stub: run_id={run_id}  (connect mol-pipeline for full execution)");
+    // Build the executor's MolConfig from the full config
+    let executor_config = mol_pipeline::executor::MolConfig {
+        topic: topic.clone(),
+        settings: std::collections::HashMap::new(),
+    };
+
+    // Build pipeline config
+    let pipeline_config = mol_pipeline::runner::PipelineConfig {
+        from_stage: args
+            .from_stage
+            .as_deref()
+            .map(mol_pipeline::stages::Stage::from_name)
+            .transpose()?
+            .unwrap_or(mol_pipeline::stages::Stage::TopicInit),
+        to_stage: args
+            .to_stage
+            .as_deref()
+            .map(mol_pipeline::stages::Stage::from_name)
+            .transpose()?,
+        auto_approve: args.auto_approve,
+        skip_noncritical: args.skip_noncritical,
+        graceful_degradation: !args.no_graceful_degradation,
+        ..Default::default()
+    };
+
+    // Execute pipeline
+    let summary = mol_pipeline::runner::execute_pipeline_with_llm(
+        &executor_config,
+        &pipeline_config,
+        &run_dir,
+        &run_id,
+        provider,
+    )
+    .await?;
+
+    // Print summary
+    println!();
+    println!("Pipeline complete:");
+    println!("  Stages completed: {}", summary.stages_completed);
+    println!("  Stages failed:    {}", summary.stages_failed);
+    println!("  Stages skipped:   {}", summary.stages_skipped);
+    println!("  Status:           {}", summary.final_status);
+    println!("  Elapsed:          {:.1}s", summary.total_elapsed_secs);
+
+    if summary.stages_failed > 0 {
+        std::process::exit(1);
+    }
 
     Ok(())
 }

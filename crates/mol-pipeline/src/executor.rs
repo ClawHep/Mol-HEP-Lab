@@ -10,6 +10,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::{debug, info};
 
 // ---------------------------------------------------------------------------
@@ -94,7 +95,7 @@ impl StageResult {
 ///
 /// Carries the run directory, configuration, and a snapshot of all artifacts
 /// produced by earlier stages.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct StageContext {
     /// Root directory for this pipeline run (e.g. `runs/run-abc123/`).
     pub run_dir: PathBuf,
@@ -107,6 +108,21 @@ pub struct StageContext {
     pub prior_artifacts: HashMap<String, PathBuf>,
     /// Whether gate stages should be auto-approved without HITL interaction.
     pub auto_approve_gates: bool,
+    /// LLM provider — `None` means stages use fallback templates.
+    pub llm: Option<Arc<dyn mol_llm::LlmProvider>>,
+}
+
+impl std::fmt::Debug for StageContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StageContext")
+            .field("run_dir", &self.run_dir)
+            .field("run_id", &self.run_id)
+            .field("config", &self.config)
+            .field("prior_artifacts", &self.prior_artifacts)
+            .field("auto_approve_gates", &self.auto_approve_gates)
+            .field("llm", &self.llm.as_ref().map(|p| p.name()))
+            .finish()
+    }
 }
 
 impl StageContext {
@@ -114,6 +130,31 @@ impl StageContext {
     pub fn stage_dir(&self, stage: Stage) -> PathBuf {
         self.run_dir.join(format!("stage-{:02}", stage.as_i32()))
     }
+}
+
+/// Call LLM with a system/user prompt pair, falling back to empty string if no
+/// provider is available or the call fails.
+///
+/// Callers should check the return value: if empty, use fallback template output.
+pub async fn llm_generate(
+    ctx: &StageContext,
+    system_prompt: &str,
+    user_prompt: &str,
+    json_mode: bool,
+) -> String {
+    if let Some(ref llm) = ctx.llm {
+        let messages = vec![
+            mol_llm::Message::system(system_prompt),
+            mol_llm::Message::user(user_prompt),
+        ];
+        match llm.chat(&messages, json_mode).await {
+            Ok(resp) => return resp.content,
+            Err(e) => {
+                tracing::warn!("LLM call failed, using fallback: {e}");
+            }
+        }
+    }
+    String::new()
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +461,15 @@ fn safe_json_loads(text: &str) -> Option<serde_json::Value> {
 /// Returns `(domain_id, display_name, top_venues)`.  Keyword matching is used
 /// against 7 domains.  Theoretical-intent words boost non-empirical domains.
 fn detect_domain(topic: &str) -> (&'static str, &'static str, &'static str) {
+    detect_domain_with_hint(topic, &[])
+}
+
+/// Like [`detect_domain`] but also accepts explicit domain hints from config.
+///
+/// If any element of `domain_hints` matches a known domain (by id, display name,
+/// or leading keywords), that domain is returned directly; otherwise falls through
+/// to the auto-detection logic.
+pub fn detect_domain_with_hint<'a>(topic: &str, domain_hints: &[&str]) -> (&'static str, &'static str, &'static str) {
     let lower = topic.to_lowercase();
 
     // Theoretical intent words — mirrors Python's _detect_domain
@@ -631,6 +681,21 @@ fn detect_domain(topic: &str) -> (&'static str, &'static str, &'static str) {
             ],
         ),
     ];
+
+    // Check explicit domain hints first (matching Python behavior)
+    if !domain_hints.is_empty() {
+        for hint in domain_hints {
+            let hl = hint.to_lowercase();
+            for &(id, name, venues, keywords) in domains {
+                if hl == id
+                    || hl == name
+                    || keywords.iter().take(3).any(|kw| hl.contains(kw))
+                {
+                    return (id, name, venues);
+                }
+            }
+        }
+    }
 
     // Score each domain
     let mut best_id = "ml";
@@ -1195,6 +1260,7 @@ mod tests {
             config: MolConfig::default(),
             prior_artifacts: HashMap::new(),
             auto_approve_gates: false,
+            llm: None,
         }
     }
 

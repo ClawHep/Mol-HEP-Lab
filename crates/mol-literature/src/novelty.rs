@@ -206,7 +206,11 @@ fn extract_keywords(text: &str) -> Vec<String> {
     let mut result = Vec::new();
     for token in text.to_lowercase().split(|c: char| !c.is_alphanumeric() && c != '-' && c != '_') {
         let t = token.trim_matches(|c: char| !c.is_alphanumeric());
-        if t.len() >= 3 && !STOP_WORDS.contains(&t) && seen.insert(t.to_owned()) {
+        if t.len() >= 3
+            && t.chars().next().map_or(false, |c| c.is_ascii_alphabetic())
+            && !STOP_WORDS.contains(&t)
+            && seen.insert(t.to_owned())
+        {
             result.push(t.to_owned());
         }
     }
@@ -374,7 +378,13 @@ fn assess_novelty(similar_papers: &[SimilarPaper], _threshold: f64) -> (f64, Str
 }
 
 fn count_hypotheses(text: &str) -> usize {
-    let h_headers = text.lines().filter(|l| l.starts_with("## H")).count();
+    let h_headers = text
+        .lines()
+        .filter(|l| {
+            l.starts_with("## H")
+                && l.as_bytes().get(4).map_or(false, |b| b.is_ascii_digit())
+        })
+        .count();
     if h_headers > 0 {
         return h_headers;
     }

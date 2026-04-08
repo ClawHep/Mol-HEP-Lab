@@ -163,6 +163,73 @@ pub fn get_contract(stage: Stage) -> StageContract {
 // Validation helpers
 // ---------------------------------------------------------------------------
 
+/// Check if a logical artifact name is satisfied by the available artifacts.
+///
+/// Accepts both exact name matches and common file-name aliases (e.g.
+/// `"topic_brief"` is satisfied by `"goal.md"`).
+fn artifact_satisfied(name: &str, available: &[String]) -> bool {
+    if available.iter().any(|a| a == name) {
+        return true;
+    }
+    // File-name aliases: logical contract name → acceptable file names
+    // Derived from actual stage implementations in stages_impl/
+    let aliases: &[(&str, &[&str])] = &[
+        // Phase A
+        ("topic_brief", &["goal.md"]),
+        ("research_questions", &["goal.md"]),
+        ("problem_tree", &["problem_tree.md", "topic_evaluation.json"]),
+        ("sub_problems", &["problem_tree.md"]),
+        // Phase B
+        ("search_queries", &["search_plan.yaml", "queries.json", "sources.json"]),
+        ("source_list", &["search_plan.yaml", "sources.json"]),
+        ("raw_papers", &["candidates.jsonl"]),
+        ("paper_metadata", &["candidates.jsonl"]),
+        ("screened_papers", &["candidates.jsonl"]),
+        ("exclusion_reasons", &["candidates.jsonl"]),
+        ("knowledge_cards", &["knowledge_cards.json"]),
+        ("citation_map", &["citation_map.json"]),
+        // Phase C
+        ("synthesis_report", &["synthesis_report.md"]),
+        ("gap_analysis", &["gap_analysis.json"]),
+        ("hypotheses", &["hypotheses.md"]),
+        ("rationale", &["hypotheses.md"]),
+        // Phase D
+        ("experiment_plan", &["exp_plan.yaml"]),
+        ("success_criteria", &["exp_plan.yaml"]),
+        ("codebase_context", &["codebase_context.json"]),
+        ("relevant_files", &["relevant_files.json"]),
+        ("experiment_code", &["experiment/", "experiment_spec.md"]),
+        ("code_readme", &["experiment_spec.md"]),
+        ("sanity_report", &["sanity_report.json"]),
+        ("resource_plan", &["resource_plan.json"]),
+        ("compute_estimate", &["schedule.json", "resource_plan.json"]),
+        // Phase E
+        ("raw_results", &["runs/"]),
+        ("run_logs", &["runs/"]),
+        ("refined_results", &["refinement_log.json", "experiment_final/"]),
+        ("refinement_log", &["refinement_log.json"]),
+        // Phase F
+        ("analysis_report", &["analysis_report.md", "experiment_summary.json"]),
+        ("figures", &["analysis_report.md"]),
+        ("decision_record", &["decision_record.json"]),
+        ("knowledge_summary", &["knowledge_summary.json"]),
+        // Phase G
+        ("paper_outline", &["paper_outline.md"]),
+        ("paper_draft", &["paper_draft.md"]),
+        ("review_comments", &["review_comments.json"]),
+        ("paper_revised", &["paper_revised.md"]),
+        ("revision_notes", &["revision_notes.md"]),
+        // Phase H
+        ("quality_report", &["quality_report.json"]),
+    ];
+    for &(logical, file_names) in aliases {
+        if name == logical {
+            return file_names.iter().any(|f| available.iter().any(|a| a == *f));
+        }
+    }
+    false
+}
+
 /// Verify that all inputs declared by `stage`'s contract are present in
 /// `available`.
 ///
@@ -174,7 +241,7 @@ pub fn validate_inputs(stage: Stage, available: &[String]) -> Result<()> {
         .required_inputs
         .iter()
         .copied()
-        .filter(|&req| !available.iter().any(|a| a == req))
+        .filter(|&req| !artifact_satisfied(req, available))
         .collect();
 
     if missing.is_empty() {

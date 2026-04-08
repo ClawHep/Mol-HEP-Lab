@@ -227,5 +227,5 @@ async fn handle_socket(socket: WebSocket) {
 // ---------------------------------------------------------------------------
 
 pub fn build_router() -> Router {
-    Router::new().route("/res", get(ws_handler))
+    Router::new().route("/ws/resources", get(ws_handler))
 }

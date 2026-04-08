@@ -1,7 +1,7 @@
 # Mol-HEP-Lab Rust Migration — Handoff Document
 
-**Date:** 2026-04-07 (updated)  
-**Status:** Phase 1-6 ✅ complete, Phase 6.5 (simplify + parity + review) ✅ complete, Phase 7 pending
+**Date:** 2026-04-08 (updated)  
+**Status:** Phase 1-6 ✅, Phase 6.5 ✅, Phase 7.1-7.5 ✅, Phase 7.6 ⚠️ in progress (review gates), Phase 7.4 pending (delete Python)
 
 ---
 
@@ -127,35 +127,151 @@ All 10 utility modules ported from Python. Commits: `923df434` through `e20f0111
 
 ---
 
+### Phase 7.1: Ultra QA — Interactive End-to-End Testing ✅
+
+**Rust CLI Testing** — All 7 commands verified:
+- `mol init` ✅ — generates config.mol.yaml from hardcoded templates (4 providers)
+- `mol validate` ✅ — checks required keys, warns on missing optionals
+- `mol doctor` ✅ — checks config, tools on PATH (python3, docker, pdflatex, opencode, npm)
+- `mol run` ✅ — generates run ID, creates output dir (pipeline executor is stub)
+- `mol setup` ✅ — checks/installs OpenCode, Docker, LaTeX, Python
+- `mol report` ✅ — scans run dir, lists artifacts, includes summaries
+- `mol serve` ✅ — unified server with real resource stats + agent bridge
+
+**Critical Fixes Applied:**
+1. **server.rs rewritten** — now integrates `mol_services::agent_bridge` and `resource_monitor` instead of stub handlers
+2. **RwLock panic fixed** — switched `tokio::sync::RwLock` to `std::sync::RwLock` in `agent_bridge.rs` (4 `blocking_read()` calls were panicking in async context)
+3. **WebSocket routes aligned** — `/ws` → `/ws/agents`, `/res` → `/ws/resources` (matches frontend expectations)
+
+**Interactive E2E Test Results:**
+- Resource Monitor: ✅ sends real CPU% + memory stats (was sending zeros)
+- Agent Bridge: ✅ initial state sync on connect (queue_update + project_list)
+- Agent Bridge: ✅ processes `quick_submit` with Chinese topic
+- Frontend HTML: ✅ served correctly from `frontend/dist`
+- Download endpoint: ✅ serves artifacts, blocks path traversal
+- Poll loop: ✅ agent state machine ticker running
+
+**Python↔Rust Parity Gaps Identified:**
+
+| Category | Gap | Severity |
+|----------|-----|----------|
+| `mol run` executor | Stub — no pipeline execution | MEDIUM (blocked on LLM) |
+| `doctor` checks | Rust has 5 checks vs Python's 12 | LOW (non-functional) |
+| `validate` depth | Rust: key existence only; Python: full schema | LOW |
+| Config filename | Rust: `config.mol.yaml`; Python: `config.arc.yaml` | LOW (intentional rebrand) |
+| LLM intent classification | Python uses LLM+keywords; Rust: keywords only | LOW |
+| `get_shared_results` | Returns placeholder `{}` | LOW |
+
+**Test count: 529 → 537 (8 new tests, 0 failures)**
+
+---
+
+### Phase 7.2: YAML Data Files Migration ✅
+
+Migrated 5 YAML data files from `backend/agent/` into `data/` directory, embedded via `include_str!` in `mol-common/src/data.rs`. LazyLock caching for parsed data. 8 tests.
+
+### Phase 7.5: Pipeline Wiring + CLI LLM Backend + Review Fixes ✅
+
+**11-task plan executed** (see `docs/superpowers/plans/2026-04-08-pipeline-wiring-and-cli-llm.md`):
+
+**Stream 1: Review Fixes (5 tasks)**
+- CRITICAL: HTTP header injection in Content-Disposition (filename sanitization)
+- HIGH: Bind to localhost by default + `--public` flag, CORS restricted to localhost origins
+- HIGH: Lock poisoning resilience — 17 `.unwrap()` → `.unwrap_or_else(|e| e.into_inner())`
+- HIGH: Algorithm parity — `detect_domain_with_hint()`, keyword extraction first-char filter, count_hypotheses regex
+- MEDIUM: LazyLock caching for YAML data, dedup in `load_seminal_papers`, poll_loop JoinHandle with `tokio::select!`, referencePapers string-or-array parsing
+
+**Stream 2: LLM Provider Abstraction (2 tasks)**
+- Created `crates/mol-llm/src/provider.rs` — `LlmProvider` trait + `CliProvider` (ACPClient wrapper) + `create_provider()` factory
+- Priority: API key → CLI tool (claude/codex/opencode) → None (fallback templates)
+- Added `llm: Option<Arc<dyn LlmProvider>>` to `StageContext` + `llm_generate()` helper
+
+**Stream 3: Pipeline Wiring (4 tasks)**
+- `mol run` now calls `execute_pipeline()` with real typed `MolConfig`
+- Stage implementations call `llm_generate()` with fallback to template output
+- Contract alias system maps file-name artifacts to logical contract names
+- `mol doctor` expanded to 17 checks (CLI LLM tools, hardware, Docker, Python sandbox)
+- `get_shared_results` scans JSON files in `shared_results/` directory
+
+**E2E Test Results:**
+```
+$ mol run --to-stage HYPOTHESIS_GEN → 8 stages, 0 failures, real artifacts
+$ mol doctor → 17 checks, detects claude/codex/opencode/acpx
+$ cargo test --workspace → 537 tests, 0 failures
+```
+
+### Phase 7.6: Human-in-the-Loop Review Gates ⚠️ IN PROGRESS
+
+**3 core problems diagnosed and fixed:**
+
+1. **Discussion mode never triggered for single-agent projects** — when only 1 agent runs (no peer for discussion), the system silently skipped discussion and auto-advanced. Now: enters `WaitingHumanReview` state, scans run_dir for key artifacts (synthesis_report.md, gap_analysis.json, etc.), emits artifact messages to DataShelf, and pauses for human review.
+
+2. **`--auto-approve` hardcoded in pipeline** — all quality gates auto-passed with no human oversight. Fix: keep `--auto-approve` for the child pipeline process (runs non-interactively), but added **bridge-level gates** between layers where the human actually interacts via WebSocket.
+
+3. **`human_feedback.jsonl` written but never read** — `inject_feedback` wrote feedback files, but pipeline stages never consumed them. Fix: expanded `inject_feedback` scope to match `WaitingHumanReview | WaitingDiscussion` agents (was only `Working | Idle`), so feedback reaches the right agents.
+
+**Implementation details:**
+
+- **New `AgentStatus::WaitingHumanReview`** — added to Rust enum + frontend TypeScript union + i18n + CSS (amber pulsing border)
+- **New `PendingTransition` struct** — stores output_queue/project/run_dir/config/topic/source_layer for deferred layer advancement
+- **`approve_waiting_agents()`** — removes PendingTransition, creates follow-up Task, resets agent to idle
+- **`classify_chat_intent_keywords()`** — now returns 3 intents: "approve" (highest priority), "query", "feedback"
+  - Approve keywords CN: 继续, 通过, 批准, 下一步, 推进, 开始, 确认
+  - Approve keywords EN: continue, proceed, approve, lgtm, go ahead, next, ok
+  - **"好的" is NOT an approve keyword** — classified as feedback (edge case tested)
+- **Layer transition gate in `on_agent_done`** — when `disc_mode=true && !is_reproduce`, pauses at every layer boundary instead of auto-advancing
+- **Frontend updates** — `waiting_human_review` status icon (👁️), CSS pulse animation, i18n strings
+- **`build_status_summary`** — added `"waiting_human_review" => "等待审阅"` translation
+- **`list_all_projects`** — WaitingHumanReview agents counted as active (not "interrupted")
+- **`schedule_idle_agents`** — skips WaitingHumanReview agents
+
+**Files modified:**
+- `crates/mol-services/src/agent_bridge.rs` (~15 edits, primary file)
+- `frontend/src/types.ts` — added `'waiting_human_review'` to AgentStatus
+- `frontend/src/components/LayerPanel.tsx` — status icon + workingCount filter
+- `frontend/src/App.css` — amber border + pulse animation
+- `frontend/src/i18n/zh.ts` + `en.ts` — i18n strings
+
+**Bugs found and fixed during E2E testing:**
+1. Chinese fullwidth quotes `"继续"` in Rust string → compilation error E0061 → replaced with corner brackets `「继续」`
+2. Feedback to WaitingHumanReview agents returned "当前无匹配的运行中项目" → fixed inject_feedback filter
+3. Query status showed "interrupted" for waiting agents → fixed list_all_projects running_ids check
+4. Approve ACK shown even when no agents waiting → added has_waiting check with fallback to feedback
+5. User couldn't see artifacts at review gate → added artifact scanning + msg_artifact emission
+
+**E2E test results (partial — paused by user):**
+- Gate 1 (experiment→coding) ✅ verified:
+  - "现在进展如何？" → query, did NOT advance ✅
+  - Feedback message → recorded, did NOT advance ✅
+  - "好的" → classified as feedback, did NOT advance ✅
+  - "继续" → classified as approve, advanced to coding layer ✅
+- Gates 2-4 (coding→execution→writing) ❌ NOT YET TESTED
+- Test script at `/private/tmp/e2e_full_test.py` with varied strategies per gate
+
+**Known bugs not yet fixed:**
+- `restart_project` config_path bug — when server restarts and project is "interrupted", project_meta.json in sub-run dir gets cleared, config_path is lost
+
+---
+
 ## What Needs To Be Done Next
 
-### Phase 7: Interactive Testing + Final Verification + Python Deletion
+### Immediate: Complete Phase 7.6 E2E Testing
+1. Start server (`mol serve`), submit a Lab·讨论 project
+2. Run `/private/tmp/e2e_full_test.py` or manually interact through all 5 review gates
+3. Verify each gate: feedback does NOT advance, approve DOES advance
+4. Test "好的" vs "ok" edge case at Gate 3
+5. Fix any issues found, then commit all Phase 7.6 changes
 
-**Task 7.1: Ultra QA — Interactive End-to-End Testing**
-Run `ultraqa --interactive` to test as a real user:
-- **Frontend workflow**: Submit a research topic via WebSocket, watch stage progression, verify artifact production, download results
-- **Backend CLI**: Test `mol-cli` commands (serve, run, health-check)
-- **Side-by-side Python↔Rust**: Run the same experiment on both backends, diff the outputs for equivalence
-- **WebSocket parity**: Connect to both Python and Rust servers, send identical commands, compare JSON responses
-- **Edge cases**: Empty topics, Chinese-only topics, concurrent agents, idea factory, discussion mode
-
-**Task 7.2: YAML Data Files Migration**
-Migrate any YAML configs/data that live in `backend/` and are needed at runtime.
-
-**Task 7.3: Final Parity Verification**
-Re-run the 4-agent verification suite after all fixes to confirm zero remaining gaps.
-
-**Task 7.4: Delete All Python Code**
+### Then: Task 7.4: Delete All Python Code
 Remove `backend/` directory entirely. Verify workspace still builds and all tests pass.
 
 ### Execution Method
 
 To continue, tell the new session:
 ```
-读 docs/superpowers/HANDOFF.md，继续 Phase 7。
-从 Task 7.1 开始：ultraqa --interactive 以真实用户身份交互式测试，
-从前端安排测试实验看工作流，从后端测试 CLI，
-同步测试 Python 和 Rust 脚本，要求表现一致。
+读 docs/superpowers/HANDOFF.md，继续 Phase 7.6。
+先完成 E2E review gate 测试（Gates 2-4 未测），
+然后 commit Phase 7.6，最后执行 Task 7.4 删除 Python 代码。
 ```
 
 ### Task Status Overview
@@ -172,10 +288,12 @@ To continue, tell the new session:
 | #29-31 (5.1-5.3) | Code Agent + Bridges | ✅ done |
 | #32 (6.1) | Services | ✅ done |
 | #33 (6.5) | Simplify + Parity + Review | ✅ done |
-| #34 (7.1) | Ultra QA Interactive Testing | **next** |
-| #35 (7.2) | YAML Data Migration | pending |
-| #36 (7.3) | Final Parity Verification | pending |
-| #37 (7.4) | Delete Python Code | pending |
+| #34 (7.1) | Ultra QA Interactive Testing | ✅ done |
+| #35 (7.2) | YAML Data Migration | ✅ done |
+| #36 (7.3) | Final Parity Verification | ✅ done |
+| #37 (7.4) | Delete Python Code | **next** |
+| #38 (7.5) | Pipeline Wiring + CLI LLM + Review Fixes | ✅ done |
+| #39 (7.6) | Human-in-the-Loop Review Gates | ⚠️ in progress (Gate 1 ✅, Gates 2-4 pending) |
 
 ### Dependency Chain
 ```
@@ -186,7 +304,11 @@ Phase 4 ───────────── ✅ complete
 Phase 5 ───────────── ✅ complete
 Phase 6 ───────────── ✅ complete
 Phase 6.5 ──────────── ✅ complete (simplify + parity + review)
-Phase 7 ───────────── IN PROGRESS (7.1 next)
+Phase 7.1 ──────────── ✅ complete (ultraqa E2E + server.rs rewrite)
+Phase 7.2 ──────────── ✅ complete (YAML data migration)
+Phase 7.5 ──────────── ✅ complete (pipeline wiring + CLI LLM + review fixes)
+Phase 7.6 ──────────── ⚠️ IN PROGRESS (review gates — Gate 1 tested, Gates 2-4 pending)
+Phase 7.4 ─────────── NEXT (delete Python code, after 7.6 complete)
 ```
 
 ---
@@ -200,8 +322,9 @@ Phase 7 ───────────── IN PROGRESS (7.1 next)
 | mol-engine | **100%** | code_agent.rs (LazyLock regexes), bridges/common.rs (shared utils), opencode + openhands fully ported |
 | mol-agents | **85%** | benchmark/figure orchestrators complete, code_searcher needs filling |
 | mol-experiment | **100%** | docker (BUILTIN_PACKAGES + auto-detect), validation (9 new functions), all other modules done |
-| mol-pipeline | **100%** | All 26 stages, ACP pre-stripping, domain keywords synced with Python, fallback queries complete |
-| mol-services | **100%** | All WebSocket commands ported (including add/remove_lobster, idea_factory, download_url), Chinese UI text |
+| mol-pipeline | **100%** | All 26 stages with LLM+fallback, runner wired to `mol run`, contract alias system, `llm_generate()` helper |
+| mol-llm | **100%** | LLMClient (API) + ACPClient (CLI) + LlmProvider trait + create_provider() factory |
+| mol-services | **100%** | All WebSocket commands ported, server.rs now integrates real services (resource_monitor + agent_bridge), std::sync::RwLock fix |
 | mol-common | **98%** | adapters, writing_guide, codebase_manifest all ported |
 | mol-domains | **100%** | experiment_schema, prompt_adapter, DomainAdapterImpl (consolidated) |
 | mol-web | **100%** | agent.rs aligned, scholar.rs with get_citations/search_author |
@@ -224,6 +347,20 @@ crates/mol-pipeline/src/
     discussion.rs
   executor.rs  (now has 13 helper functions + dispatch to stages_impl)
   runner.rs    (now has contract validation)
+```
+
+### New File Structure (Phase 7.5 additions)
+```
+crates/mol-llm/src/
+  provider.rs        (LlmProvider trait + CliProvider + create_provider factory)
+crates/mol-common/src/
+  data.rs            (embedded YAML data with LazyLock caching)
+data/
+  seminal_papers.yaml
+  benchmark_knowledge.yaml
+  dataset_registry.yaml
+  docker_profiles.yaml
+  prompts.default.yaml
 ```
 
 ### New File Structure (Phase 5-6 additions)

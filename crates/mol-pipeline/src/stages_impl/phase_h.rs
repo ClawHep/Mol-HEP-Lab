@@ -27,6 +27,63 @@ pub async fn execute_quality_gate(stage: Stage, ctx: &StageContext) -> StageResu
     let paper_draft =
         read_prior_artifact_pub(&ctx.run_dir, "paper_draft.md").unwrap_or_default();
 
+    // Try LLM to generate quality report; fall back to template if empty.
+    let paper_for_llm = if !revised_paper.is_empty() { &revised_paper } else { &paper_draft };
+    let llm_quality = crate::executor::llm_generate(
+        ctx,
+        "You are a rigorous quality assurance reviewer for academic papers.",
+        &format!(
+            "Perform a quality gate review of this paper on topic: {}\n\n\
+             Paper:\n{}\n\n\
+             Return a JSON object with: topic, paper_title, generated_at, quality_score (0-10), \
+             max_score (10), passes (bool, true if score>=6), threshold (6), \
+             checks (array with name/passed/points/earned), improvement_suggestions (array), \
+             verdict ('PASS' or 'FAIL — revision required').",
+            topic,
+            if paper_for_llm.is_empty() { "(no paper available)" } else { &paper_for_llm[..paper_for_llm.len().min(2000)] }
+        ),
+        true,
+    )
+    .await;
+    if !llm_quality.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("quality_report.json"), &llm_quality) {
+            return StageResult::failure(stage, format!("write quality_report.json: {e}"));
+        }
+        // Parse passes from LLM output to enforce gate logic
+        let passes = serde_json::from_str::<serde_json::Value>(&llm_quality)
+            .ok()
+            .and_then(|v| v["passes"].as_bool())
+            .unwrap_or(true);
+        if !passes && !ctx.auto_approve_gates {
+            return StageResult {
+                stage,
+                status: StageStatus::BlockedApproval,
+                artifacts: vec!["quality_report.json".to_owned()],
+                error: None,
+                decision: "awaiting_approval".to_owned(),
+                elapsed_secs: 0.0,
+            };
+        }
+        if !ctx.auto_approve_gates {
+            return StageResult {
+                stage,
+                status: StageStatus::BlockedApproval,
+                artifacts: vec!["quality_report.json".to_owned()],
+                error: None,
+                decision: "awaiting_approval".to_owned(),
+                elapsed_secs: 0.0,
+            };
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["quality_report.json".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     // Use whichever paper we can find
     let paper_text = if !revised_paper.is_empty() {
         revised_paper
@@ -220,6 +277,58 @@ pub async fn execute_export_publish(stage: Stage, ctx: &StageContext) -> StageRe
 
     let topic = ctx.config.topic.as_str();
 
+    // Try LLM to generate final paper polish; otherwise fall through to template.
+    let prior_paper = read_prior_artifact_pub(&ctx.run_dir, "paper_revised.md")
+        .or_else(|| read_prior_artifact_pub(&ctx.run_dir, "paper_draft.md"))
+        .unwrap_or_default();
+    if !prior_paper.is_empty() {
+        let llm_final = crate::executor::llm_generate(
+            ctx,
+            "You are a copy editor finalizing an academic paper for publication.",
+            &format!(
+                "Produce the final camera-ready version of this paper on topic: {}\n\n\
+                 Remove all revision notes and editorial marks. Clean up formatting. \
+                 Ensure the paper flows coherently.\n\nPaper:\n{}",
+                topic,
+                &prior_paper[..prior_paper.len().min(4000)]
+            ),
+            false,
+        )
+        .await;
+        if !llm_final.is_empty() {
+            let paper_final_with_header = format!(
+                "<!-- Mol-HEP-Lab Final Paper Export | {} -->\n<!-- Run: {} | Topic: {} -->\n\n{}",
+                utcnow_iso(),
+                ctx.run_id,
+                topic,
+                llm_final
+            );
+            if let Err(e) = fs::write(stage_dir.join("paper_final.md"), &paper_final_with_header) {
+                return StageResult::failure(stage, format!("write paper_final.md: {e}"));
+            }
+            let title = extract_paper_title(&llm_final);
+            let title_escaped = title.replace('_', r"\_").replace('&', r"\&").replace('%', r"\%");
+            let topic_escaped = topic.replace('_', r"\_");
+            let paper_tex = format!(
+                "\\documentclass{{article}}\n\\title{{{}}}\n\\author{{Authors}}\n\\date{{{}}}\n\
+                 \\begin{{document}}\n\\maketitle\n[Content from paper\\_final.md]\n\\end{{document}}\n",
+                if title_escaped.is_empty() { format!("Advances in {}", topic_escaped) } else { title_escaped },
+                utcnow_iso()
+            );
+            if let Err(e) = fs::write(stage_dir.join("paper.tex"), &paper_tex) {
+                return StageResult::failure(stage, format!("write paper.tex: {e}"));
+            }
+            return StageResult {
+                stage,
+                status: StageStatus::Done,
+                artifacts: vec!["paper_final.md".to_owned(), "paper.tex".to_owned()],
+                error: None,
+                decision: "proceed".to_owned(),
+                elapsed_secs: 0.0,
+            };
+        }
+    }
+
     // Try to find best available paper version
     let paper_text = read_prior_artifact_pub(&ctx.run_dir, "paper_revised.md")
         .or_else(|| read_prior_artifact_pub(&ctx.run_dir, "paper_draft.md"))
@@ -335,6 +444,36 @@ pub async fn execute_citation_verify(stage: Stage, ctx: &StageContext) -> StageR
         .or_else(|| read_prior_artifact_pub(&ctx.run_dir, "paper_draft.md"))
         .unwrap_or_default();
 
+    // Try LLM to generate citation verification report; fall back to template if empty.
+    let llm_verification = crate::executor::llm_generate(
+        ctx,
+        "You are a citation verification specialist checking academic paper references.",
+        &format!(
+            "Verify citations in this paper on topic: {}\n\n\
+             Paper:\n{}\n\n\
+             Return a JSON object with: topic, generated_at, paper_found (bool), \
+             total_citations (int), verified (int), unverified (int), warnings (array), \
+             citations (array with citation_key/type/status/note), overall_status ('pass'/'warn'/'fail'), notes.",
+            topic,
+            if paper_text.is_empty() { "(no paper found)" } else { &paper_text[..paper_text.len().min(3000)] }
+        ),
+        true,
+    )
+    .await;
+    if !llm_verification.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("verification_report.json"), &llm_verification) {
+            return StageResult::failure(stage, format!("write verification_report.json: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["verification_report.json".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     // Simple citation extraction: look for [N] or [Author YYYY] patterns
     let mut citations_found: Vec<serde_json::Value> = Vec::new();
     let mut checked = 0usize;
@@ -422,6 +561,7 @@ mod tests {
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: auto_approve,
+            llm: None,
         }
     }
 

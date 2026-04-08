@@ -175,6 +175,7 @@
 .agent-card.status-waiting_discussion { border-color: #8b5cf688; }
 .agent-card.status-discussing { border-color: #a78bfa88; animation: pulse 2s infinite; }
 .agent-card.status-error { border-color: #ef444488; }
+.agent-card.status-waiting_human_review { border-color: #f59e0b88; animation: pulse 2s infinite; }
 .agent-card.agent-highlighted {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent), 0 1px 6px rgba(59, 130, 246, 0.25);
@@ -203,6 +204,7 @@
 .status-dot.working { background: #f59e0b; animation: pulse 1.2s infinite; }
 .status-dot.waiting_discussion { background: #8b5cf6; animation: pulse 2s infinite; }
 .status-dot.discussing { background: #a78bfa; animation: pulse 1.5s infinite; }
+.status-dot.waiting_human_review { background: #f59e0b; animation: pulse 2.5s infinite; }
 .status-dot.error { background: #ef4444; }
 .status-dot.done { background: #10b981; }
 .agent-task {

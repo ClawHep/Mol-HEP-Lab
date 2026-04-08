@@ -25,6 +25,37 @@ pub async fn execute_paper_outline(stage: Stage, ctx: &StageContext) -> StageRes
     let _hypotheses = read_prior_artifact_pub(&ctx.run_dir, "hypotheses.md").unwrap_or_default();
     let _analysis = read_prior_artifact_pub(&ctx.run_dir, "analysis_report.md").unwrap_or_default();
 
+    // Try LLM to generate paper outline; fall back to template if empty.
+    let llm_outline = crate::executor::llm_generate(
+        ctx,
+        "You are an academic writing coach creating structured paper outlines.",
+        &format!(
+            "Create a detailed paper outline in markdown for a research paper on: {}\n\n\
+             Hypotheses:\n{}\nAnalysis:\n{}\n\n\
+             Include: working title, sections (Abstract, Introduction, Related Work, Method, \
+             Experiments, Discussion, Conclusion, References, Appendix) with subsections and \
+             word/page counts.",
+            topic,
+            if _hypotheses.is_empty() { "(no hypotheses)" } else { &_hypotheses },
+            if _analysis.is_empty() { "(no analysis)" } else { &_analysis }
+        ),
+        false,
+    )
+    .await;
+    if !llm_outline.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("paper_outline.md"), &llm_outline) {
+            return StageResult::failure(stage, format!("write paper_outline.md: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["paper_outline.md".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     let paper_outline = format!(
         r#"# Paper Outline
 
@@ -136,6 +167,37 @@ pub async fn execute_paper_draft(stage: Stage, ctx: &StageContext) -> StageResul
     let _analysis = read_prior_artifact_pub(&ctx.run_dir, "analysis_report.md").unwrap_or_default();
 
     let checklist = generate_neurips_checklist(true, false, true);
+
+    // Try LLM to generate paper draft; fall back to template if empty.
+    let llm_draft = crate::executor::llm_generate(
+        ctx,
+        "You are an academic writer drafting a full research paper.",
+        &format!(
+            "Write a complete research paper draft in markdown for topic: {}\n\n\
+             Outline:\n{}\nAnalysis:\n{}\n\n\
+             Include all sections: Abstract, Introduction (with contributions), Related Work, \
+             Method, Experiments (with results table), Discussion, Conclusion, References (10+). \
+             Use realistic placeholder numbers consistent with the analysis.",
+            topic,
+            if _outline.is_empty() { "(no outline available)" } else { &_outline },
+            if _analysis.is_empty() { "(no analysis available)" } else { &_analysis }
+        ),
+        false,
+    )
+    .await;
+    if !llm_draft.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("paper_draft.md"), &llm_draft) {
+            return StageResult::failure(stage, format!("write paper_draft.md: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["paper_draft.md".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
 
     let paper_draft = format!(
         r#"# Advances in {topic}: Cross-Domain Transfer via Adaptive Pre-Training
@@ -375,6 +437,37 @@ pub async fn execute_peer_review(stage: Stage, ctx: &StageContext) -> StageResul
         title
     };
 
+    // Try LLM to generate peer review comments; fall back to template if empty.
+    let llm_reviews = crate::executor::llm_generate(
+        ctx,
+        "You are simulating peer review for a top ML conference (NeurIPS/ICML/ICLR).",
+        &format!(
+            "Generate peer review comments JSON for the paper '{}' on topic: {}\n\n\
+             Paper draft:\n{}\n\n\
+             Return a JSON object with: paper_title, topic, generated_at, venue, decision_summary, \
+             meta_review, reviews (array of 3 with reviewer_id/expertise/overall_score/confidence/ \
+             summary/strengths/weaknesses/questions/requested_changes), average_score, required_revisions.",
+            paper_title,
+            topic,
+            if draft.is_empty() { "(no draft available)" } else { &draft[..draft.len().min(2000)] }
+        ),
+        true,
+    )
+    .await;
+    if !llm_reviews.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("review_comments.json"), &llm_reviews) {
+            return StageResult::failure(stage, format!("write review_comments.json: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["review_comments.json".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     let review_comments = serde_json::json!({
         "paper_title": paper_title,
         "topic": topic,
@@ -499,6 +592,45 @@ pub async fn execute_paper_revision(stage: Stage, ctx: &StageContext) -> StageRe
     let topic = ctx.config.topic.as_str();
     let original_draft = read_prior_artifact_pub(&ctx.run_dir, "paper_draft.md").unwrap_or_default();
     let _reviews = read_prior_artifact_pub(&ctx.run_dir, "review_comments.json").unwrap_or_default();
+
+    // Try LLM to generate revised paper; fall back to template if empty.
+    let llm_revised = crate::executor::llm_generate(
+        ctx,
+        "You are an academic writer revising a research paper based on peer review feedback.",
+        &format!(
+            "Revise the following paper draft for topic '{}' based on the review comments.\n\n\
+             Original draft:\n{}\n\nReview comments:\n{}\n\n\
+             Return the complete revised paper in markdown, addressing all major reviewer concerns. \
+             Mark significant changes with inline notes.",
+            topic,
+            if original_draft.is_empty() { "(no draft available)" } else { &original_draft[..original_draft.len().min(3000)] },
+            if _reviews.is_empty() { "(no review comments available)" } else { &_reviews[.._reviews.len().min(1000)] }
+        ),
+        false,
+    )
+    .await;
+    if !llm_revised.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("paper_revised.md"), &llm_revised) {
+            return StageResult::failure(stage, format!("write paper_revised.md: {e}"));
+        }
+        let revision_notes = format!(
+            "# Revision Notes\n\n**Topic**: {topic}\n**Generated**: {ts}\n\n\
+             Revisions generated by LLM agent based on peer review feedback.\n",
+            topic = topic,
+            ts = utcnow_iso(),
+        );
+        if let Err(e) = fs::write(stage_dir.join("revision_notes.md"), &revision_notes) {
+            return StageResult::failure(stage, format!("write revision_notes.md: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["paper_revised.md".to_owned(), "revision_notes.md".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
 
     // Revised paper: add revision notes inline
     let revised_intro = format!(
@@ -636,6 +768,7 @@ mod tests {
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: true,
+            llm: None,
         }
     }
 

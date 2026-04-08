@@ -64,6 +64,7 @@ const en: Record<string, string> = {
   'layer.agent_status.done': 'Done',
   'layer.agent_status.waiting_discussion': 'Awaiting Discussion',
   'layer.agent_status.discussing': 'Discussing',
+  'layer.agent_status.waiting_human_review': 'Awaiting Review',
   'layer.discussion': 'Discussion',
   'layer.log_title': '📋 Layer Logs',
   'layer.no_logs': 'No logs yet',

@@ -116,6 +116,20 @@ impl Stage {
     pub fn as_i32(self) -> i32 {
         self.into()
     }
+
+    /// Parse a stage from its human-readable name (e.g. `"TOPIC_INIT"`).
+    pub fn from_name(name: &str) -> Result<Self> {
+        let upper = name.to_uppercase();
+        for &stage in STAGE_SEQUENCE {
+            if stage.name() == upper {
+                return Ok(stage);
+            }
+        }
+        if upper == "DISCUSSION" {
+            return Ok(Stage::Discussion);
+        }
+        bail!("unknown stage name: {name}")
+    }
 }
 
 impl std::fmt::Display for Stage {

@@ -26,6 +26,50 @@ pub async fn execute_topic_init(stage: Stage, ctx: &StageContext) -> StageResult
     };
 
     // ---- goal.md -----------------------------------------------------------
+    // Try LLM first; fall back to template if empty.
+    let llm_goal = crate::executor::llm_generate(
+        ctx,
+        "You are a rigorous research planner for ML/HEP experiments.",
+        &format!(
+            "Create a SMART research goal in markdown for the following topic:\n\n{}\n\n\
+             Include: specific objectives, measurable outcomes, timeline considerations.",
+            topic_display
+        ),
+        false,
+    )
+    .await;
+    if !llm_goal.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("goal.md"), &llm_goal) {
+            return StageResult::failure(stage, format!("write goal.md: {e}"));
+        }
+        // Still generate hardware profile
+        let hardware_json = serde_json::json!({
+            "detected_at": crate::executor::utcnow_iso(),
+            "cpu": {
+                "cores": num_cpus(),
+                "architecture": std::env::consts::ARCH,
+            },
+            "os": std::env::consts::OS,
+            "gpu": detect_gpu(),
+            "memory_gb": detect_memory_gb(),
+            "notes": "Hardware profile generated at TopicInit. Actual GPU availability checked at ExperimentRun."
+        });
+        if let Err(e) = fs::write(
+            stage_dir.join("hardware_profile.json"),
+            serde_json::to_string_pretty(&hardware_json).unwrap_or_default(),
+        ) {
+            return StageResult::failure(stage, format!("write hardware_profile.json: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["goal.md".to_owned(), "hardware_profile.json".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     let goal_md = format!(
         r#"# Research Goal
 
@@ -130,6 +174,49 @@ pub async fn execute_problem_decompose(stage: Stage, ctx: &StageContext) -> Stag
     );
 
     // ---- problem_tree.md ---------------------------------------------------
+    // Try LLM first; fall back to template if empty.
+    let llm_tree = crate::executor::llm_generate(
+        ctx,
+        "You are a research strategist decomposing complex research problems.",
+        &format!(
+            "Decompose the following research topic into a structured problem tree in markdown.\n\n\
+             Topic: {}\n\n\
+             Include: main research problem, 4-6 sub-problems with priorities, key risks, mitigations, \
+             and next steps.",
+            topic
+        ),
+        false,
+    )
+    .await;
+    if !llm_tree.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("problem_tree.md"), &llm_tree) {
+            return StageResult::failure(stage, format!("write problem_tree.md: {e}"));
+        }
+        let eval_json = serde_json::json!({
+            "topic": ctx.config.topic,
+            "feasibility_score": 7,
+            "novelty_score": 7,
+            "impact_score": 7,
+            "resource_requirements": "medium",
+            "estimated_weeks": 8,
+            "notes": "Evaluation after LLM-generated problem decomposition."
+        });
+        if let Err(e) = fs::write(
+            stage_dir.join("topic_evaluation.json"),
+            serde_json::to_string_pretty(&eval_json).unwrap_or_default(),
+        ) {
+            return StageResult::failure(stage, format!("write topic_evaluation.json: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["problem_tree.md".to_owned(), "topic_evaluation.json".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     let problem_tree_md = format!(
         r#"# Problem Decomposition
 
@@ -322,6 +409,7 @@ mod tests {
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: false,
+            llm: None,
         }
     }
 

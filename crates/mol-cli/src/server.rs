@@ -9,119 +9,35 @@
 
 use anyhow::Result;
 use axum::{
-    extract::{
-        ws::{Message, WebSocket},
-        Path, State, WebSocketUpgrade,
-    },
+    extract::{Path, State},
     http::StatusCode,
     response::Response,
     routing::get,
     Router,
 };
-use std::{
-    net::SocketAddr,
-    path::PathBuf,
-    sync::Arc,
-    time::Duration,
-};
-use tokio::sync::broadcast;
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use tower_http::services::ServeDir;
 
 /// Configuration passed from `mol serve`.
-#[allow(dead_code)]
 pub struct ServerConfig {
     pub port: u16,
-    pub resource_port: u16,
-    pub bridge_port: u16,
     pub frontend_dir: PathBuf,
     pub agent_dir: PathBuf,
     pub runs_dir: PathBuf,
-}
-
-/// Shared application state threaded through axum handlers.
-#[derive(Clone)]
-struct AppState {
-    /// Broadcast channel for resource stats JSON blobs.
-    resource_tx: broadcast::Sender<String>,
-    /// Broadcast channel for agent bridge messages.
-    bridge_tx: broadcast::Sender<String>,
-    /// Root directory for downloadable artifacts.
-    runs_dir: Arc<PathBuf>,
-}
-
-// ── Resource Monitor WebSocket ──────────────────────────────────────────────
-
-async fn ws_resources(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
-    ws.on_upgrade(move |socket| handle_resource_socket(socket, state.resource_tx.subscribe()))
-}
-
-async fn handle_resource_socket(
-    mut socket: WebSocket,
-    mut rx: broadcast::Receiver<String>,
-) {
-    loop {
-        match rx.recv().await {
-            Ok(msg) => {
-                if socket.send(Message::Text(msg.into())).await.is_err() {
-                    break;
-                }
-            }
-            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            Err(_) => break,
-        }
-    }
-}
-
-// ── Agent Bridge WebSocket ──────────────────────────────────────────────────
-
-async fn ws_agents(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
-    ws.on_upgrade(move |socket| handle_agent_socket(socket, state.bridge_tx.subscribe()))
-}
-
-async fn handle_agent_socket(
-    mut socket: WebSocket,
-    mut rx: broadcast::Receiver<String>,
-) {
-    loop {
-        tokio::select! {
-            msg = socket.recv() => {
-                match msg {
-                    Some(Ok(Message::Text(_text))) => {
-                        // Commands from the browser are handled here.
-                        // Full implementation delegates to mol-agents.
-                        tracing::debug!("agent bridge received client command");
-                    }
-                    Some(Ok(Message::Close(_))) | None => break,
-                    Some(Err(_)) => break,
-                    _ => {}
-                }
-            }
-            broadcast = rx.recv() => {
-                match broadcast {
-                    Ok(msg) => {
-                        if socket.send(Message::Text(msg.into())).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(_) => break,
-                }
-            }
-        }
-    }
+    /// Bind to 0.0.0.0 instead of 127.0.0.1.
+    pub public: bool,
 }
 
 // ── Download Handler ────────────────────────────────────────────────────────
 
+#[derive(Clone)]
+struct DownloadState {
+    runs_dir: Arc<PathBuf>,
+}
+
 async fn download_artifact(
     Path(rel_path): Path<String>,
-    State(state): State<AppState>,
+    State(state): State<DownloadState>,
 ) -> Result<Response, StatusCode> {
     let full_path = state.runs_dir.join(&rel_path);
 
@@ -144,11 +60,17 @@ async fn download_artifact(
         .and_then(|n| n.to_str())
         .unwrap_or("download");
 
+    // Sanitize filename to prevent HTTP header injection
+    let safe_name = filename
+        .replace('"', "_")
+        .replace('\r', "")
+        .replace('\n', "");
+
     let response = axum::response::Response::builder()
         .header("Content-Type", "application/octet-stream")
         .header(
             "Content-Disposition",
-            format!("attachment; filename=\"{filename}\""),
+            format!("attachment; filename=\"{safe_name}\""),
         )
         .body(axum::body::Body::from(bytes))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -156,62 +78,62 @@ async fn download_artifact(
     Ok(response)
 }
 
-// ── Resource stats ticker (stub) ────────────────────────────────────────────
-
-async fn resource_ticker(tx: broadcast::Sender<String>) {
-    let mut interval = tokio::time::interval(Duration::from_secs(2));
-    loop {
-        interval.tick().await;
-        let stats = serde_json::json!({
-            "type": "resource_stats",
-            "payload": {
-                "cpuPercent": 0.0,
-                "memUsed": 0,
-                "memTotal": 0,
-                "gpus": [],
-                "timestamp": chrono::Utc::now().timestamp_millis()
-            }
-        });
-        let _ = tx.send(stats.to_string());
-    }
-}
-
-// ── Router assembly ─────────────────────────────────────────────────────────
-
-fn build_router(state: AppState, frontend_dir: PathBuf) -> Router {
-    let serve_dir = ServeDir::new(&frontend_dir).append_index_html_on_directories(true);
-
-    Router::new()
-        .route("/ws/resources", get(ws_resources))
-        .route("/ws/agents", get(ws_agents))
-        .route("/download/{*path}", get(download_artifact))
-        .fallback_service(serve_dir)
-        .layer(CorsLayer::permissive())
-        .with_state(state)
-}
-
 // ── Entry point ─────────────────────────────────────────────────────────────
 
 pub async fn run(cfg: ServerConfig) -> Result<()> {
-    let (resource_tx, _) = broadcast::channel::<String>(256);
-    let (bridge_tx, _) = broadcast::channel::<String>(256);
+    // Create the real BridgeState from mol-services
+    let bridge_state = mol_services::agent_bridge::BridgeState::new(
+        "python3".to_string(),
+        cfg.agent_dir.to_string_lossy().into_owned(),
+        cfg.runs_dir.to_string_lossy().into_owned(),
+        8,  // total_gpus (default, same as start.sh)
+        1,  // gpus_per_project
+        false, // auto_loop
+        false, // discussion_mode
+        2,     // discussion_rounds
+        vec!["claude-sonnet-4-6".to_string(), "qwen3.5-plus".to_string()],
+    );
 
-    let state = AppState {
-        resource_tx: resource_tx.clone(),
-        bridge_tx: bridge_tx.clone(),
+    // Create default agent pool so submitted tasks have workers immediately
+    mol_services::agent_bridge::create_default_agents(&bridge_state);
+
+    // Spawn the poll loop that drives agent state machines
+    let poll_state = bridge_state.clone();
+    let poll_handle = tokio::spawn(mol_services::agent_bridge::poll_loop(poll_state, 2.0));
+
+    // Build the services router (handles /ws/agents and /ws/resources)
+    let services_router = mol_services::build_server(bridge_state);
+
+    // Download handler
+    let download_state = DownloadState {
         runs_dir: Arc::new(cfg.runs_dir),
     };
+    let download_router = Router::new()
+        .route("/download/{*path}", get(download_artifact))
+        .with_state(download_state);
 
-    // Spawn the resource stats ticker
-    tokio::spawn(resource_ticker(resource_tx));
+    // Static frontend files
+    let serve_dir = ServeDir::new(&cfg.frontend_dir).append_index_html_on_directories(true);
 
-    let app = build_router(state, cfg.frontend_dir);
+    // Combine all routers
+    let app = Router::new()
+        .merge(services_router)
+        .merge(download_router)
+        .fallback_service(serve_dir);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], cfg.port));
+    let bind_addr = if cfg.public { [0, 0, 0, 0] } else { [127, 0, 0, 1] };
+    let addr = SocketAddr::from((bind_addr, cfg.port));
     tracing::info!("Listening on http://{addr}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    tokio::select! {
+        result = axum::serve(listener, app) => result?,
+        result = poll_handle => {
+            if let Err(e) = result {
+                tracing::error!("poll_loop crashed: {e}");
+            }
+        }
+    }
 
     Ok(())
 }

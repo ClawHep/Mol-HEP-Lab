@@ -22,16 +22,18 @@ pub mod result_registry;
 
 use axum::Router;
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 /// Build a combined Axum router that mounts all service sub-routers.
 ///
-/// - `GET /ws`       — Agent bridge WebSocket endpoint
-/// - `GET /res`      — Resource monitor WebSocket endpoint
-/// - `GET /download/{project_id}/{filename}` — Artifact file download
+/// - `GET /ws/agents`     — Agent bridge WebSocket endpoint
+/// - `GET /ws/resources`  — Resource monitor WebSocket endpoint
 pub fn build_server(state: Arc<agent_bridge::BridgeState>) -> Router {
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            origin.as_bytes().starts_with(b"http://localhost")
+                || origin.as_bytes().starts_with(b"http://127.0.0.1")
+        }))
         .allow_methods(Any)
         .allow_headers(Any);
 

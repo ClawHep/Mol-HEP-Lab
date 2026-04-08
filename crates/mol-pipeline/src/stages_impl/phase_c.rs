@@ -25,6 +25,50 @@ pub async fn execute_synthesis(stage: Stage, ctx: &StageContext) -> StageResult 
         .unwrap_or_default();
 
     // ---- synthesis_report.md -----------------------------------------------
+    // Try LLM first; fall back to template if empty.
+    let llm_synthesis = crate::executor::llm_generate(
+        ctx,
+        "You are a senior research scientist synthesizing scientific literature.",
+        &format!(
+            "Synthesize the literature for the research topic: {}\n\n\
+             Knowledge cards:\n{}\n\n\
+             Produce a synthesis report in markdown covering: executive summary, \
+             literature clusters (2-3), recurring themes, research gaps (5+), \
+             and opportunities for contribution.",
+            topic,
+            if _knowledge_cards.is_empty() { "(no knowledge cards available)" } else { &_knowledge_cards }
+        ),
+        false,
+    )
+    .await;
+    if !llm_synthesis.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("synthesis_report.md"), &llm_synthesis) {
+            return StageResult::failure(stage, format!("write synthesis_report.md: {e}"));
+        }
+        let gap_analysis = serde_json::json!({
+            "topic": topic,
+            "generated_at": utcnow_iso(),
+            "total_papers_reviewed": 5,
+            "gaps": [],
+            "recommended_focus": "gap-01",
+            "clusters": []
+        });
+        if let Err(e) = fs::write(
+            stage_dir.join("gap_analysis.json"),
+            serde_json::to_string_pretty(&gap_analysis).unwrap_or_default(),
+        ) {
+            return StageResult::failure(stage, format!("write gap_analysis.json: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["synthesis_report.md".to_owned(), "gap_analysis.json".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     let synthesis_report = format!(
         r#"# Synthesis Report
 
@@ -194,6 +238,35 @@ pub async fn execute_hypothesis_gen(stage: Stage, ctx: &StageContext) -> StageRe
         .unwrap_or_default();
 
     // ---- hypotheses.md ----------------------------------------------------
+    // Try LLM first; fall back to template if empty.
+    let llm_hypotheses = crate::executor::llm_generate(
+        ctx,
+        "You are a research scientist formulating falsifiable scientific hypotheses.",
+        &format!(
+            "Based on the following synthesis report for topic '{}', generate 4-5 falsifiable \
+             research hypotheses in markdown.\n\nSynthesis:\n{}\n\n\
+             Each hypothesis must include: statement, rationale, falsification criteria, \
+             and experimental design.",
+            topic,
+            if _synthesis.is_empty() { "(no synthesis report available)" } else { &_synthesis }
+        ),
+        false,
+    )
+    .await;
+    if !llm_hypotheses.is_empty() {
+        if let Err(e) = fs::write(stage_dir.join("hypotheses.md"), &llm_hypotheses) {
+            return StageResult::failure(stage, format!("write hypotheses.md: {e}"));
+        }
+        return StageResult {
+            stage,
+            status: StageStatus::Done,
+            artifacts: vec!["hypotheses.md".to_owned()],
+            error: None,
+            decision: "proceed".to_owned(),
+            elapsed_secs: 0.0,
+        };
+    }
+
     let hypotheses_md = format!(
         r#"# Research Hypotheses
 
@@ -341,6 +414,7 @@ mod tests {
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: false,
+            llm: None,
         }
     }
 

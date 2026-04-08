@@ -13,14 +13,6 @@ pub struct ServeArgs {
     #[arg(long, env = "FRONTEND_PORT", default_value = "5903")]
     pub port: u16,
 
-    /// WebSocket port for the resource monitor
-    #[arg(long, env = "RESOURCE_MONITOR_PORT", default_value = "8905")]
-    pub resource_port: u16,
-
-    /// WebSocket port for the agent bridge
-    #[arg(long, env = "AGENT_BRIDGE_PORT", default_value = "8906")]
-    pub bridge_port: u16,
-
     /// Directory containing the built frontend assets
     #[arg(long, env = "FRONTEND_DIR", default_value = "frontend/dist")]
     pub frontend_dir: PathBuf,
@@ -32,6 +24,10 @@ pub struct ServeArgs {
     /// Runs directory (backend/runs)
     #[arg(long, default_value = "backend/runs")]
     pub runs_dir: PathBuf,
+
+    /// Bind to 0.0.0.0 instead of 127.0.0.1 (use for remote access)
+    #[arg(long, default_value = "false")]
+    pub public: bool,
 }
 
 pub async fn execute(args: ServeArgs) -> Result<()> {
@@ -39,19 +35,18 @@ pub async fn execute(args: ServeArgs) -> Result<()> {
 
     println!("Mol-HEP-Lab — Starting all services");
     println!();
-    println!("  Frontend:        http://localhost:{}/", args.port);
-    println!("  Resource WS:     ws://localhost:{}", args.resource_port);
-    println!("  Agent Bridge WS: ws://localhost:{}", args.bridge_port);
+    println!("  Frontend + API:  http://localhost:{}/", args.port);
+    println!("  Resource WS:     ws://localhost:{}/ws/resources", args.port);
+    println!("  Agent Bridge WS: ws://localhost:{}/ws/agents", args.port);
     println!("  Frontend dir:    {}", args.frontend_dir.display());
     println!();
 
     let cfg = server::ServerConfig {
         port: args.port,
-        resource_port: args.resource_port,
-        bridge_port: args.bridge_port,
         frontend_dir: args.frontend_dir,
         agent_dir: args.agent_dir,
         runs_dir: args.runs_dir,
+        public: args.public,
     };
 
     server::run(cfg).await

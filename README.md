@@ -9,17 +9,17 @@
 </p> -->
 
 <p align="center">
-  <a href="https://clawailab.ai"><img src="https://img.shields.io/badge/Homepage-clawailab.ai-E63946?logo=google-chrome&logoColor=white" alt="Homepage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="MIT License"></a>
-  <a href="https://python.org"><img src="https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white" alt="Python 3.11+"></a>
+  <a href="https://www.rust-lang.org"><img src="https://img.shields.io/badge/Rust-1.80%2B-DEA584?logo=rust&logoColor=white" alt="Rust 1.80+"></a>
   <a href="https://nodejs.org"><img src="https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=white" alt="Node.js 18+"></a>
-  <a href="https://github.com/Mol-HEP-Lab/Mol-HEP-Lab"><img src="https://img.shields.io/badge/GitHub-Mol--HEP--Lab-6f42c1?logo=github&logoColor=white" alt="GitHub"></a>
+  <a href="https://github.com/ClawHep/Mol-HEP-Lab"><img src="https://img.shields.io/badge/GitHub-Mol--HEP--Lab-6f42c1?logo=github&logoColor=white" alt="GitHub"></a>
 </p>
 
 ---
 
 ## 🔥 Updates
 
+- __[2026.04.08]__: v2.0.0 — Full-stack **Rust** rewrite. Single `mol` CLI replaces Python backend.
 - __[2026.04.02]__: Preview v1.1.0 — powered by **Mol-Code Harness**.
 - __[2026.03.25]__: Preview v1.0.0 - initial release.
 
@@ -131,59 +131,51 @@ Multi-agent discussion on: **"What is the most deployable direction for Video Ac
 ### 1. Install
 
 ```bash
-git clone https://github.com/Mol-HEP-Lab/Mol-HEP-Lab.git
+git clone https://github.com/ClawHep/Mol-HEP-Lab.git
 cd Mol-HEP-Lab
 
-# Create python environment
-conda create -n clawailab python=3.11
-conda activate clawailab
-
-# Backend
-cd backend/agent
-pip install -e ".[all]"
-pip install websockets
+# Build the Rust backend (requires Rust 1.80+)
+cargo build --release
 
 # Frontend
-cd ../../frontend
-npm install
-cd ..
+cd frontend && npm install && npm run build && cd ..
 
-# ML dependencies
-# You can add more packages based on your research project
+# ML dependencies (for experiment execution)
 pip install torch torchvision diffusers transformers accelerate safetensors datasets \
             huggingface_hub opencv-python pandas matplotlib scikit-image scipy einops tqdm
 ```
 
 ### 2. Configure
 
-Fill in following configurations in examples/config_template.yaml:
+```bash
+mol init                # Generate config.mol.yaml interactively
+mol doctor              # Check all dependencies (LLM CLI tools, Docker, Python, etc.)
 ```
+
+Or manually edit `config.mol.yaml`:
+```yaml
 llm:
+  provider: "openai-compatible"   # or "acp" for Claude Code CLI
   api_key: "your-api-key"
   primary_model: "gpt-5.4"
   coding_model: "gpt-5.4"
-  image_model: "gemini-3-pro-image-preview"
-  fallback_models:
-    - "qwen3.5-plus"
-    - "qwen-plus"
 
-sandbox:
-  python_path: "/path/to/your/python3"
+experiment:
+  sandbox:
+    python_path: "/path/to/your/python3"
 ```
-
-Thanks a lot for [KOKONI's](https://www.kokoni3d.com/) support for this project, and api_key can be obtained [here](http://www.longcatcloud.com/).
 
 ### 3. Run
 
 ```bash
-./start.sh              # Start all services
-./start.sh stop         # Stop
-./start.sh restart      # Restart
-./start.sh status       # Status check
-./start.sh fresh        # Clean restart (reset all data)
-```
+mol serve               # Start unified server (backend + frontend)
+# Open http://localhost:8765/ → Submit your research topic
 
-Open **http://localhost:5903/** → Submit your research topic and let the agents work.
+# Or run headless:
+mol run --topic "Your research topic"
+mol run --to-stage HYPOTHESIS_GEN   # Run up to a specific stage
+mol report              # View artifacts from the latest run
+```
 
 ---
 
@@ -312,7 +304,7 @@ If you find Mol-HEP-Lab useful, please cite:
                   Lin, Guosheng and Chen, Tianrun and Ye, Deheng and Liu, Fayao},
   title        = {Mol-HEP-Lab: An Autonomous Multi-Agent Research Team},
   year         = {2026},
-  url          = {https://github.com/Mol-HEP-Lab/Mol-HEP-Lab},
+  url          = {https://github.com/ClawHep/Mol-HEP-Lab},
   note         = {GitHub repository}
 }
 ```

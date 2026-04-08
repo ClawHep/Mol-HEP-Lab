@@ -64,6 +64,7 @@ const zh: Record<string, string> = {
   'layer.agent_status.done': '完成',
   'layer.agent_status.waiting_discussion': '等待讨论',
   'layer.agent_status.discussing': '讨论中',
+  'layer.agent_status.waiting_human_review': '等待人工审阅',
   'layer.discussion': '沟通讨论',
   'layer.log_title': '📋 层级日志',
   'layer.no_logs': '暂无日志',

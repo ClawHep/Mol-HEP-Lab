@@ -203,7 +203,7 @@ export const ALL_REPOS: readonly RepoId[] = [
 
 // ===================== Agent & Runtime Types =====================
 
-export type AgentStatus = 'idle' | 'working' | 'error' | 'done' | 'waiting_discussion' | 'discussing';
+export type AgentStatus = 'idle' | 'working' | 'error' | 'done' | 'waiting_discussion' | 'discussing' | 'waiting_human_review';
 export type StageStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'waiting' | 'discussing';
 
 export interface MolAgent {
@@ -349,6 +349,7 @@ export type WSMessage =
   | { type: 'queue_update'; payload: QueueMap }
   | { type: 'chat_message'; payload: ChatMessage }
   | { type: 'project_list'; payload: ProjectInfo[] }
+  | { type: 'download_url'; payload: { projectId: string; filename: string; url: string } }
   | { type: 'system'; payload: { message: string } };
 
 // ===================== App State =====================

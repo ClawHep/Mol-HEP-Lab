@@ -1,3 +1,7 @@
+# ── Rust ──
+target/
+*.rlib
+
 # ── Runtime ──
 logs/
 .pids/

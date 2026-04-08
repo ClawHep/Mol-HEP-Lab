@@ -152,6 +152,54 @@ fn check_config(config_path: &PathBuf) -> Vec<CheckResult> {
     results
 }
 
+fn check_docker_runtime() -> CheckResult {
+    match std::process::Command::new("docker").args(["info", "--format", "{{.ServerVersion}}"]).output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            CheckResult {
+                name: "docker_runtime".to_string(),
+                status: CheckStatus::Pass,
+                message: format!("Docker daemon running (v{version})"),
+            }
+        }
+        Ok(_) => CheckResult {
+            name: "docker_runtime".to_string(),
+            status: CheckStatus::Warn,
+            message: "Docker installed but daemon not running".to_string(),
+        },
+        Err(_) => CheckResult {
+            name: "docker_runtime".to_string(),
+            status: CheckStatus::Warn,
+            message: "Docker not installed".to_string(),
+        },
+    }
+}
+
+fn check_python_sandbox() -> CheckResult {
+    match std::process::Command::new("python3").args(["--version"]).output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Check if numpy/torch are importable
+            let has_numpy = std::process::Command::new("python3")
+                .args(["-c", "import numpy"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            let extras = if has_numpy { " (numpy OK)" } else { " (numpy missing)" };
+            CheckResult {
+                name: "python_sandbox".to_string(),
+                status: CheckStatus::Pass,
+                message: format!("{version}{extras}"),
+            }
+        }
+        _ => CheckResult {
+            name: "python_sandbox".to_string(),
+            status: CheckStatus::Warn,
+            message: "python3 not available".to_string(),
+        },
+    }
+}
+
 pub async fn execute(args: DoctorArgs) -> Result<()> {
     let config_path = resolve_config(args.config.as_ref())?;
 
@@ -164,8 +212,37 @@ pub async fn execute(args: DoctorArgs) -> Result<()> {
     checks.push(check_tool("python3"));
     checks.push(check_tool("docker"));
     checks.push(check_tool("pdflatex"));
-    checks.push(check_tool("opencode"));
     checks.push(check_tool("npm"));
+
+    // CLI LLM tool checks (any one of these enables CLI-based LLM mode)
+    let cli_llm_tools = ["claude", "codex", "opencode", "acpx"];
+    let has_any_cli = cli_llm_tools.iter().any(|t| which::which(t).is_ok());
+    for tool in &cli_llm_tools {
+        checks.push(check_tool(tool));
+    }
+    checks.push(CheckResult {
+        name: "cli_llm".to_string(),
+        status: if has_any_cli { CheckStatus::Pass } else { CheckStatus::Warn },
+        message: if has_any_cli {
+            "CLI LLM backend available".to_string()
+        } else {
+            "No CLI LLM tools found (claude, codex, opencode, acpx)".to_string()
+        },
+    });
+
+    // Hardware detection
+    let hw = mol_common::detect_hardware();
+    checks.push(CheckResult {
+        name: "hardware".to_string(),
+        status: if hw.has_gpu { CheckStatus::Pass } else { CheckStatus::Warn },
+        message: format!("GPU: {} ({})", hw.gpu_name, hw.tier),
+    });
+
+    // Docker runtime check
+    checks.push(check_docker_runtime());
+
+    // Python sandbox check
+    checks.push(check_python_sandbox());
 
     // Determine overall status
     let overall = if checks.iter().any(|c| matches!(c.status, CheckStatus::Fail)) {

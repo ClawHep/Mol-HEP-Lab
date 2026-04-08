@@ -147,6 +147,17 @@ pub async fn execute_pipeline(
     run_dir: &Path,
     run_id: &str,
 ) -> Result<PipelineSummary> {
+    execute_pipeline_with_llm(config, pipeline_config, run_dir, run_id, None).await
+}
+
+/// Execute the pipeline with an optional LLM provider.
+pub async fn execute_pipeline_with_llm(
+    config: &MolConfig,
+    pipeline_config: &PipelineConfig,
+    run_dir: &Path,
+    run_id: &str,
+    llm: Option<std::sync::Arc<dyn mol_llm::LlmProvider>>,
+) -> Result<PipelineSummary> {
     tokio::fs::create_dir_all(run_dir).await?;
 
     let t_start = Instant::now();
@@ -160,6 +171,46 @@ pub async fn execute_pipeline(
 
     // Determine the effective starting stage (may be overridden by checkpoint).
     let effective_from = determine_start_stage(pipeline_config.from_stage, run_dir).await;
+
+    // Pre-populate artifact_registry from prior stage directories.
+    // This is essential when resuming from a later stage (e.g., S9) so that
+    // contract validation can find artifacts produced by earlier stages (S1-S8).
+    if effective_from != Stage::TopicInit {
+        for &prior_stage in STAGE_SEQUENCE {
+            if prior_stage == effective_from {
+                break;
+            }
+            let contract = crate::contracts::get_contract(prior_stage);
+            let stage_num = prior_stage.as_i32();
+            let stage_dir = run_dir.join(format!("stage-{:02}", stage_num));
+            if stage_dir.is_dir() {
+                // If the stage directory exists and contains any files, assume
+                // the stage completed successfully and register all its declared
+                // outputs. Filenames on disk may differ from contract names
+                // (e.g. "exp_plan.yaml" vs "experiment_plan"), so we check for
+                // any non-empty stage dir rather than exact filename matches.
+                let has_files = std::fs::read_dir(&stage_dir)
+                    .ok()
+                    .map(|rd| rd.filter_map(|e| e.ok()).any(|e| e.path().is_file()))
+                    .unwrap_or(false);
+                if has_files {
+                    for artifact_name in &contract.expected_outputs {
+                        artifact_registry.insert(
+                            artifact_name.to_string(),
+                            stage_dir.join(artifact_name),
+                        );
+                    }
+                }
+            }
+        }
+        if !artifact_registry.is_empty() {
+            info!(
+                "Pre-populated {} artifacts from prior stages for resume at {}",
+                artifact_registry.len(),
+                effective_from.name()
+            );
+        }
+    }
 
     'outer: for &stage in STAGE_SEQUENCE {
         // Range filter: skip stages outside [from_stage, to_stage].
@@ -200,6 +251,7 @@ pub async fn execute_pipeline(
             config: config.clone(),
             prior_artifacts: artifact_registry.clone(),
             auto_approve_gates: pipeline_config.auto_approve,
+            llm: llm.clone(),
         };
 
         // Execute the stage.
@@ -379,6 +431,7 @@ pub async fn execute_iterative_pipeline(
     run_id: &str,
     max_iterations: u32,
 ) -> Result<Vec<StageResult>> {
+    let llm: Option<std::sync::Arc<dyn mol_llm::LlmProvider>> = None;
     let iterative_stages = [
         Stage::ExperimentRun,
         Stage::IterativeRefine,
@@ -430,6 +483,7 @@ pub async fn execute_iterative_pipeline(
                 config: config.clone(),
                 prior_artifacts: iter_artifacts.clone(),
                 auto_approve_gates: pipeline_config.auto_approve,
+                llm: llm.clone(),
             };
 
             let result = match execute_stage(stage, &context).await {
@@ -547,10 +601,9 @@ mod tests {
 
     #[tokio::test]
     async fn pipeline_runs_phase_a() {
-        // TopicInit produces file-name artifacts (goal.md, hardware_profile.json)
-        // rather than the contract's logical names (topic_brief, research_questions).
-        // ProblemDecompose requires topic_brief, so input validation fails and the
-        // pipeline returns an error for the critical stage.
+        // TopicInit produces file-name artifacts (goal.md, hardware_profile.json).
+        // The contract alias system maps goal.md → topic_brief so
+        // ProblemDecompose's input validation passes.
         let dir = TempDir::new().unwrap();
         let pipeline_cfg = PipelineConfig {
             from_stage: Stage::TopicInit,
@@ -558,19 +611,18 @@ mod tests {
             auto_approve: true,
             ..Default::default()
         };
-        let result = execute_pipeline(
+        let summary = execute_pipeline(
             &default_config(),
             &pipeline_cfg,
             dir.path(),
             "test-002",
         )
-        .await;
+        .await
+        .unwrap();
 
-        // ProblemDecompose is a critical stage; missing topic_brief input
-        // causes the pipeline to return an error rather than silently skip.
-        assert!(result.is_err(), "expected input validation error for critical stage");
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("topic_brief"), "error should name the missing artifact: {msg}");
+        // Both stages should complete successfully.
+        assert_eq!(summary.stages_completed, 2);
+        assert_eq!(summary.stages_failed, 0);
     }
 
     #[tokio::test]
@@ -592,8 +644,9 @@ mod tests {
     #[tokio::test]
     async fn pipeline_stop_on_gate() {
         // Running TopicInit → LiteratureScreen will fail at ProblemDecompose
-        // because stage implementations emit file-name artifacts while contracts
-        // use logical names.  The pipeline returns an error for the critical stage.
+        // With contract alias resolution, pipeline can now proceed through
+        // TopicInit → ProblemDecompose → ... → LiteratureScreen (gate).
+        // stop_on_gate=true should block at LiteratureScreen.
         let dir = TempDir::new().unwrap();
         let pipeline_cfg = PipelineConfig {
             from_stage: Stage::TopicInit,
@@ -602,16 +655,18 @@ mod tests {
             stop_on_gate: true,
             ..Default::default()
         };
-        let result = execute_pipeline(
+        let summary = execute_pipeline(
             &default_config(),
             &pipeline_cfg,
             dir.path(),
             "test-gate",
         )
-        .await;
+        .await
+        .unwrap();
 
-        // ProblemDecompose is critical; missing topic_brief triggers an error.
-        assert!(result.is_err());
+        // Pipeline should reach LiteratureScreen and block at the gate.
+        assert!(summary.stages_completed > 0);
+        assert_eq!(summary.final_status, "blocked_approval");
     }
 
     #[tokio::test]

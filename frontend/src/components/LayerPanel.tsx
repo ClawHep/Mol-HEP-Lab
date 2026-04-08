@@ -14,6 +14,7 @@ interface Props {
 const STATUS_ICON: Record<string, string> = {
   idle: '🧬', working: '🔬', error: '❗', done: '✅',
   waiting_discussion: '🗣️', discussing: '🗣️',
+  waiting_human_review: '👁️',
 };
 const STAGE_ST: Record<string, string> = {
   pending: '⬜', running: '🔄', completed: '✅', failed: '❌', skipped: '⏭',
@@ -29,7 +30,7 @@ export default memo(function LayerPanel({ layer, agents, logs, selectedProjectId
   const discussionLabel = `💬${t('stage.100')}`;
   const recentLogs = logs.slice(-30);
   const widthPercent = Math.min(100, agents.length * 18 + 20);
-  const workingCount = agents.filter((a) => ['working', 'waiting_discussion', 'discussing'].includes(a.status)).length;
+  const workingCount = agents.filter((a) => ['working', 'waiting_discussion', 'discussing', 'waiting_human_review'].includes(a.status)).length;
 
   return (
     <div
