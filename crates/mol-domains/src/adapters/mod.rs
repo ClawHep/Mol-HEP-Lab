@@ -1,10 +1,20 @@
-//! Domain adapter trait and data-driven implementation.
+//! Domain adapter trait and implementations.
 //!
 //! Each adapter wraps a [`DomainProfile`] and provides prompt overlays,
 //! code-generation hints, and other domain-specific metadata that can be
 //! injected into LLM pipeline prompts.
+//!
+//! **Primary path**: [`ChainBackedAdapter`] reads all behaviour from
+//! knowledge-chain files (`domain.yaml`, `prompts/*.md`).
+//!
+//! **Legacy path**: [`DomainAdapterImpl`] uses hardcoded match arms.
+
+pub mod chain_backed;
+
+pub use chain_backed::ChainBackedAdapter;
 
 use crate::profile::{DomainProfile, ResearchDomain};
+use mol_common::KnowledgeChain;
 
 // ---------------------------------------------------------------------------
 // Trait
@@ -336,7 +346,16 @@ pub type GenericAdapter = DomainAdapterImpl;
 // Factory
 // ---------------------------------------------------------------------------
 
-/// Create the appropriate [`DomainAdapter`] for the given profile.
+/// Create a [`DomainAdapter`] from a static profile (legacy path).
 pub fn adapter_for(profile: DomainProfile) -> Box<dyn DomainAdapter> {
     Box::new(DomainAdapterImpl::new(profile))
+}
+
+/// Create a [`ChainBackedAdapter`] that reads domain behaviour from the
+/// knowledge chain.  This is the preferred factory for new code.
+pub fn adapter_for_chain(
+    chain: KnowledgeChain,
+    domain: ResearchDomain,
+) -> ChainBackedAdapter {
+    ChainBackedAdapter::load(chain, domain)
 }

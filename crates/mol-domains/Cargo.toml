@@ -12,3 +12,6 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 mol-common = { workspace = true }
 mol-config = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

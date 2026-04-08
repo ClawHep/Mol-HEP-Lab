@@ -41,9 +41,9 @@ pub mod prompt_adapter;
 // ---------------------------------------------------------------------------
 
 pub use adapters::{
-    adapter_for, BiologyAdapter, ChemistryAdapter, DomainAdapter, DomainAdapterImpl,
-    EconomicsAdapter, EngineeringAdapter, GenericAdapter, MathAdapter, MlAdapter, PhysicsAdapter,
-    RoboticsAdapter, SecurityAdapter,
+    adapter_for, adapter_for_chain, BiologyAdapter, ChainBackedAdapter, ChemistryAdapter,
+    DomainAdapter, DomainAdapterImpl, EconomicsAdapter, EngineeringAdapter, GenericAdapter,
+    MathAdapter, MlAdapter, PhysicsAdapter, RoboticsAdapter, SecurityAdapter,
 };
 
 pub use detector::{detect_domain, detect_domain_with_llm, domain_keywords};
