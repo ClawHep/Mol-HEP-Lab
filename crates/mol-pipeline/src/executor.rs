@@ -161,6 +161,36 @@ impl StageResult {
 }
 
 // ---------------------------------------------------------------------------
+// Stage-Agent mapping
+// ---------------------------------------------------------------------------
+
+/// Map each pipeline stage to its primary HEP agent definition.
+///
+/// Returns the agent filename stem (e.g. `"lead-analyst"`) which resolves to
+/// `{knowledge_root}/agents/{name}.md`. Discussion returns `None` as it is a
+/// multi-agent stage with its own template.
+pub fn agent_for_stage(stage: Stage) -> Option<&'static str> {
+    match stage {
+        Stage::TopicInit | Stage::ProblemDecompose => Some("lead-analyst"),
+        Stage::SearchStrategy | Stage::LiteratureCollect
+        | Stage::LiteratureScreen | Stage::KnowledgeExtract => Some("investigator"),
+        Stage::Synthesis => Some("theory-scout"),
+        Stage::HypothesisGen => Some("lead-analyst"),
+        Stage::ExperimentDesign | Stage::ResourcePlanning => Some("lead-analyst"),
+        Stage::CodebaseSearch | Stage::CodeGeneration | Stage::ExperimentRun => Some("signal-lead"),
+        Stage::SanityCheck => Some("cross-checker"),
+        Stage::IterativeRefine => Some("systematics-fitter"),
+        Stage::ResultAnalysis | Stage::KnowledgeSummary => Some("lead-analyst"),
+        Stage::ResearchDecision => Some("arbiter"),
+        Stage::PaperOutline | Stage::PaperDraft | Stage::PaperRevision => Some("note-writer"),
+        Stage::PeerReview => Some("physics-reviewer"),
+        Stage::QualityGate => Some("arbiter"),
+        Stage::KnowledgeArchive | Stage::ExportPublish | Stage::CitationVerify => Some("note-writer"),
+        Stage::Discussion => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // StageContext
 // ---------------------------------------------------------------------------
 
@@ -296,6 +326,24 @@ fn strip_llm_noise(s: &str) -> String {
         }
     }
     result
+}
+
+/// Strip YAML frontmatter (delimited by `---`) from a markdown document.
+/// Returns the content after the closing `---` delimiter.
+fn strip_frontmatter(text: &str) -> &str {
+    if !text.starts_with("---") {
+        return text;
+    }
+    // Find the closing "---" after the opening one.
+    // `end` is relative to text[3..], so absolute offset of content after
+    // the closing delimiter is: 3 (opening "---") + end + 4 ("\n---") = end + 7.
+    if let Some(end) = text[3..].find("\n---") {
+        let after = end + 7;
+        if after < text.len() {
+            return text[after..].trim_start_matches('\n');
+        }
+    }
+    text
 }
 
 /// Strip markdown code fences (```json ... ``` or ``` ... ```) from LLM output.
@@ -1649,5 +1697,37 @@ mod tests {
         let vars: HashMap<String, String> = HashMap::new();
         let err = engine.render_prompt(Stage::TopicInit, &vars).unwrap_err();
         assert!(err.to_string().contains("---user---"));
+    }
+
+    #[test]
+    fn strip_frontmatter_removes_yaml() {
+        let input = "---\nname: test\nmodel: opus\n---\n\n# Agent\n\nBody text.";
+        let result = strip_frontmatter(input);
+        assert_eq!(result.trim(), "# Agent\n\nBody text.");
+    }
+
+    #[test]
+    fn strip_frontmatter_no_frontmatter_returns_all() {
+        let input = "# Just markdown\n\nNo frontmatter here.";
+        let result = strip_frontmatter(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn strip_frontmatter_empty_returns_empty() {
+        assert_eq!(strip_frontmatter(""), "");
+    }
+
+    #[test]
+    fn agent_for_stage_covers_all_variants() {
+        use crate::stages::STAGE_SEQUENCE;
+        for &stage in STAGE_SEQUENCE {
+            let _ = agent_for_stage(stage);
+        }
+        assert!(agent_for_stage(Stage::Discussion).is_none());
+        assert_eq!(agent_for_stage(Stage::TopicInit), Some("lead-analyst"));
+        assert_eq!(agent_for_stage(Stage::CodeGeneration), Some("signal-lead"));
+        assert_eq!(agent_for_stage(Stage::PeerReview), Some("physics-reviewer"));
+        assert_eq!(agent_for_stage(Stage::ResearchDecision), Some("arbiter"));
     }
 }
