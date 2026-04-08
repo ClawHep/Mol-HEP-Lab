@@ -19,7 +19,7 @@ pub async fn execute_topic_init(stage: Stage, ctx: &StageContext) -> StageResult
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
@@ -86,7 +86,7 @@ pub async fn execute_problem_decompose(stage: Stage, ctx: &StageContext) -> Stag
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),

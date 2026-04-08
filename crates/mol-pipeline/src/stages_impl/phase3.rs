@@ -23,7 +23,7 @@ pub async fn execute_experiment_design(stage: Stage, ctx: &StageContext) -> Stag
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = ctx.prompt_engine.as_ref()
         .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
     let engine = match engine {
@@ -96,7 +96,7 @@ pub async fn execute_codebase_search(stage: Stage, ctx: &StageContext) -> StageR
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = ctx.prompt_engine.as_ref()
         .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
     let engine = match engine {
@@ -167,7 +167,7 @@ pub async fn execute_code_generation(stage: Stage, ctx: &StageContext) -> StageR
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = ctx.prompt_engine.as_ref()
         .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
     let engine = match engine {
@@ -248,7 +248,7 @@ pub async fn execute_sanity_check(stage: Stage, ctx: &StageContext) -> StageResu
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = ctx.prompt_engine.as_ref()
         .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
     let engine = match engine {
@@ -310,7 +310,7 @@ pub async fn execute_resource_planning(stage: Stage, ctx: &StageContext) -> Stag
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = ctx.prompt_engine.as_ref()
         .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
     let engine = match engine {
@@ -382,7 +382,7 @@ pub async fn execute_experiment_run(stage: Stage, ctx: &StageContext) -> StageRe
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = ctx.prompt_engine.as_ref()
         .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
     let engine = match engine {
@@ -448,7 +448,7 @@ pub async fn execute_iterative_refine(stage: Stage, ctx: &StageContext) -> Stage
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = ctx.prompt_engine.as_ref()
         .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
     let engine = match engine {

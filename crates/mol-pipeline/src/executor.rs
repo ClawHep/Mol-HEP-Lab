@@ -236,11 +236,22 @@ impl StageContext {
         self.run_dir.join(format!("stage-{:02}", stage.as_i32()))
     }
 
+    /// Resolve a path within the domain knowledge tree.
+    fn knowledge_path(&self, relative: &str) -> PathBuf {
+        self.config.knowledge_root.join(relative)
+    }
+
+    /// Read a file from the knowledge tree. Returns `None` if missing.
+    fn read_knowledge(&self, relative: &str) -> Option<String> {
+        std::fs::read_to_string(self.knowledge_path(relative)).ok()
+    }
+
     /// Build the template variable map for rendering stage prompts.
     ///
-    /// Populates common variables (topic, domain, analysis_type, timestamp)
-    /// and reads relevant prior artifacts into the map.
-    pub fn template_vars(&self) -> HashMap<String, String> {
+    /// Populates common variables (topic, domain, analysis_type, timestamp),
+    /// reads relevant prior artifacts, and injects domain knowledge (agent role,
+    /// conventions, blinding protocol) from the knowledge tree.
+    pub fn template_vars(&self, stage: Stage) -> HashMap<String, String> {
         let mut vars = HashMap::new();
         vars.insert("topic".to_owned(), self.config.topic.clone());
         vars.insert("domain".to_owned(), self.config.domain.clone());
@@ -273,6 +284,33 @@ impl StageContext {
             if let Some(content) = read_prior_artifact(&self.run_dir, filename) {
                 vars.insert(key.to_owned(), content);
             }
+        }
+
+        // --- Domain knowledge injection ---
+
+        // Agent role: inject the matched agent's markdown body (frontmatter stripped)
+        if let Some(agent_name) = agent_for_stage(stage) {
+            if let Some(raw) = self.read_knowledge(&format!("agents/{agent_name}.md")) {
+                vars.insert("agent_role".into(), strip_frontmatter(&raw).to_owned());
+            }
+        }
+
+        // Conventions: inject by analysis_type (extraction, search, unfolding)
+        let analysis_type = self.config.analysis_type.as_deref().unwrap_or("general");
+        match self.read_knowledge(&format!("conventions/{analysis_type}.md")) {
+            Some(content) => { vars.insert("conventions".into(), content); }
+            None if analysis_type != "general" => {
+                tracing::warn!(
+                    analysis_type,
+                    "convention file not found for analysis_type — {{{{ conventions }}}} will be empty"
+                );
+            }
+            _ => {}
+        }
+
+        // Blinding protocol
+        if let Some(content) = self.read_knowledge("methodology/04-blinding.md") {
+            vars.insert("blinding_protocol".into(), content);
         }
 
         vars
@@ -1697,6 +1735,42 @@ mod tests {
         let vars: HashMap<String, String> = HashMap::new();
         let err = engine.render_prompt(Stage::TopicInit, &vars).unwrap_err();
         assert!(err.to_string().contains("---user---"));
+    }
+
+    #[tokio::test]
+    async fn template_vars_injects_agent_role() {
+        let dir = TempDir::new().unwrap();
+        let kr = dir.path().join("test_kr");
+        std::fs::create_dir_all(kr.join("agents")).unwrap();
+        std::fs::write(
+            kr.join("agents/lead-analyst.md"),
+            "---\nname: lead-analyst\n---\n\n# Lead Analyst\nYou are the lead.",
+        ).unwrap();
+        std::fs::create_dir_all(kr.join("conventions")).unwrap();
+        std::fs::write(kr.join("conventions/search.md"), "# Search Conventions\nBlah.").unwrap();
+        std::fs::create_dir_all(kr.join("methodology")).unwrap();
+        std::fs::write(kr.join("methodology/04-blinding.md"), "# Blinding\nDo not peek.").unwrap();
+
+        let ctx = StageContext {
+            run_dir: dir.path().to_owned(),
+            run_id: "test".into(),
+            config: MolConfig {
+                topic: "jet tagging".into(),
+                domain: "hep".into(),
+                analysis_type: Some("search".into()),
+                knowledge_root: kr,
+                ..Default::default()
+            },
+            prior_artifacts: HashMap::new(),
+            auto_approve_gates: false,
+            llm: None,
+            prompt_engine: None,
+        };
+
+        let vars = ctx.template_vars(Stage::TopicInit);
+        assert!(vars.get("agent_role").unwrap().contains("Lead Analyst"));
+        assert!(vars.get("conventions").unwrap().contains("Search Conventions"));
+        assert!(vars.get("blinding_protocol").unwrap().contains("Blinding"));
     }
 
     #[test]

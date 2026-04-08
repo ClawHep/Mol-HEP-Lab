@@ -22,7 +22,7 @@ pub async fn execute_paper_outline(stage: Stage, ctx: &StageContext) -> StageRes
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
@@ -77,7 +77,7 @@ pub async fn execute_paper_draft(stage: Stage, ctx: &StageContext) -> StageResul
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
@@ -132,7 +132,7 @@ pub async fn execute_peer_review(stage: Stage, ctx: &StageContext) -> StageResul
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
@@ -190,7 +190,7 @@ pub async fn execute_paper_revision(stage: Stage, ctx: &StageContext) -> StageRe
     let topic = ctx.config.topic.as_str();
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
@@ -256,7 +256,7 @@ pub async fn execute_quality_gate(stage: Stage, ctx: &StageContext) -> StageResu
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
@@ -411,7 +411,7 @@ pub async fn execute_export_publish(stage: Stage, ctx: &StageContext) -> StageRe
 
     // Render prompt from template engine
     // The template handles missing prior artifacts via {{ paper_revised | default(value="") }}
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
@@ -487,7 +487,7 @@ pub async fn execute_citation_verify(stage: Stage, ctx: &StageContext) -> StageR
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),

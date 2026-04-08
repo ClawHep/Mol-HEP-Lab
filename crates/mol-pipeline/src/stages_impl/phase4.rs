@@ -27,7 +27,7 @@ pub async fn execute_result_analysis(stage: Stage, ctx: &StageContext) -> StageR
     let results = collect_experiment_results(&ctx.run_dir, "accuracy", "max");
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
@@ -103,7 +103,7 @@ pub async fn execute_research_decision(stage: Stage, ctx: &StageContext) -> Stag
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
@@ -176,7 +176,7 @@ pub async fn execute_knowledge_summary(stage: Stage, ctx: &StageContext) -> Stag
     }
 
     // Render prompt from template engine
-    let vars = ctx.template_vars();
+    let vars = ctx.template_vars(stage);
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
