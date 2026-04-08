@@ -142,6 +142,18 @@ pub async fn execute(args: RunArgs) -> Result<()> {
     let executor_config = mol_pipeline::executor::MolConfig {
         topic: topic.clone(),
         settings: std::collections::HashMap::new(),
+        domain: full_config
+            .research
+            .domains
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "hep".to_owned()),
+        analysis_type: full_config.research.analysis_type.clone(),
+        templates_dir: full_config
+            .research
+            .templates_dir
+            .as_ref()
+            .map(std::path::PathBuf::from),
     };
 
     // Build pipeline config

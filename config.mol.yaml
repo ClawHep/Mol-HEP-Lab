@@ -10,6 +10,8 @@ research:
   daily_paper_count: 5
   quality_threshold: 3.0
   reference_papers: []
+  analysis_type: "search"
+  templates_dir: "hep/templates/stages"
 
 notifications:
   channel: "console"

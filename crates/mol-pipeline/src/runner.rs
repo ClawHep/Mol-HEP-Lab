@@ -2,7 +2,7 @@
 //! decision-rollback handling.
 
 use crate::checkpoint::{read_checkpoint, resume_from_checkpoint, write_checkpoint, write_heartbeat};
-use crate::executor::{execute_stage, MolConfig, StageContext, StageResult};
+use crate::executor::{execute_stage, MolConfig, StageContext, StagePromptEngine, StageResult};
 use crate::stages::{
     advance, decision_rollback, Stage, StageStatus, TransitionEvent, NONCRITICAL_STAGES,
     STAGE_SEQUENCE, MAX_DECISION_PIVOTS,
@@ -12,6 +12,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{info, warn};
 
@@ -160,6 +161,24 @@ pub async fn execute_pipeline_with_llm(
 ) -> Result<PipelineSummary> {
     tokio::fs::create_dir_all(run_dir).await?;
 
+    // Load the prompt engine once at pipeline start.
+    let prompt_engine: Option<Arc<StagePromptEngine>> = {
+        let templates_dir = config
+            .templates_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("hep/templates/stages"));
+        match StagePromptEngine::load(&templates_dir) {
+            Ok(engine) => {
+                info!("Loaded stage templates from {}", templates_dir.display());
+                Some(Arc::new(engine))
+            }
+            Err(e) => {
+                warn!("Failed to load stage templates from {}: {}", templates_dir.display(), e);
+                None
+            }
+        }
+    };
+
     let t_start = Instant::now();
     let total_stages = STAGE_SEQUENCE.len();
 
@@ -252,7 +271,7 @@ pub async fn execute_pipeline_with_llm(
             prior_artifacts: artifact_registry.clone(),
             auto_approve_gates: pipeline_config.auto_approve,
             llm: llm.clone(),
-            prompt_engine: None, // TODO: wire in Task 7
+            prompt_engine: prompt_engine.clone(),
         };
 
         // Periodic heartbeat while stage is running.
@@ -444,6 +463,13 @@ pub async fn execute_iterative_pipeline(
     max_iterations: u32,
 ) -> Result<Vec<StageResult>> {
     let llm: Option<std::sync::Arc<dyn mol_llm::LlmProvider>> = None;
+    let prompt_engine: Option<Arc<StagePromptEngine>> = {
+        let templates_dir = config
+            .templates_dir
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("hep/templates/stages"));
+        StagePromptEngine::load(&templates_dir).ok().map(Arc::new)
+    };
     let iterative_stages = [
         Stage::ExperimentRun,
         Stage::IterativeRefine,
@@ -496,7 +522,7 @@ pub async fn execute_iterative_pipeline(
                 prior_artifacts: iter_artifacts.clone(),
                 auto_approve_gates: pipeline_config.auto_approve,
                 llm: llm.clone(),
-                prompt_engine: None, // TODO: wire in Task 7
+                prompt_engine: prompt_engine.clone(),
             };
 
             let result = match execute_stage(stage, &context).await {

@@ -107,6 +107,12 @@ pub struct ResearchConfig {
     pub graceful_degradation: bool,
     #[serde(default)]
     pub reference_papers: Vec<String>,
+    /// Analysis type within the domain (e.g. "extraction", "search", "measurement").
+    #[serde(default)]
+    pub analysis_type: Option<String>,
+    /// Path to stage template directory. Defaults to `hep/templates/stages/`.
+    #[serde(default)]
+    pub templates_dir: Option<String>,
 }
 
 /// Runtime scheduling and parallelism knobs.
