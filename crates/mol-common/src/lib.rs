@@ -20,6 +20,7 @@ pub mod codebase_manifest;
 pub mod data;
 pub mod hardware;
 pub mod hep;
+pub mod knowledge;
 pub mod prompts;
 pub mod quality;
 pub mod sanitize;
@@ -49,6 +50,9 @@ pub use sanitize::{
     redact_api_keys, sanitize_filename, sanitize_figure_id, sanitize_run_id, strip_thinking_tags,
     truncate_text,
 };
+
+// Knowledge
+pub use knowledge::KnowledgeChain;
 
 // Prompts
 pub use prompts::PromptEngine;
