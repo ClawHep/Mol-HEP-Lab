@@ -228,6 +228,14 @@ Pipeline sequence:
 If Mol-HEP-Lab contributes to your physics analysis, please cite:
 
 ```bibtex
+@misc{wang2026molheplab,
+  author       = {Wang, Maxen},
+  title        = {Mol-HEP-Lab: Autonomous Multi-Agent Research Platform for High-Energy Physics},
+  year         = {2026},
+  url          = {https://github.com/ClawHep/Mol-HEP-Lab},
+  note         = {GitHub repository}
+}
+
 @misc{wu2026clawailab,
   author       = {Wu, Fan and Chen, Cheng and Tan, Zhenshan and Zhang, Taiyu and
                   Gao, Dingcheng and Zhu, Lanyun and Zhu, Qi and Tan, Yi and Ji, Deyi and 
