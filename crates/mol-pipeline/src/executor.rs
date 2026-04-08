@@ -6,7 +6,7 @@
 //! `StageResult` so the pipeline wiring can be exercised end-to-end.
 
 use crate::stages::{Stage, StageStatus};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -44,6 +44,69 @@ impl Default for MolConfig {
             analysis_type: None,
             templates_dir: None,
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StagePromptEngine
+// ---------------------------------------------------------------------------
+
+/// Loads and renders stage-specific prompt templates from disk.
+///
+/// Each stage maps to a `.md` file named after the lowercased stage name
+/// (e.g. `Stage::TopicInit` → `topic_init.md`).  Templates are rendered with
+/// Tera and split on `---user---` into (system_prompt, user_prompt) pairs.
+pub struct StagePromptEngine {
+    engine: mol_common::PromptEngine,
+}
+
+impl StagePromptEngine {
+    /// Load all stage templates from `templates_dir`.
+    pub fn load(templates_dir: &Path) -> Result<Self> {
+        let engine = mol_common::PromptEngine::from_directory(templates_dir)
+            .with_context(|| format!("load stage templates from {}", templates_dir.display()))?;
+        Ok(Self { engine })
+    }
+
+    /// Check whether a template exists for the given stage.
+    pub fn has_template(&self, stage: Stage) -> bool {
+        let name = Self::template_name(stage);
+        self.engine.has_template(&name)
+    }
+
+    /// Render the prompt template for `stage`, returning `(system_prompt, user_prompt)`.
+    ///
+    /// The template is split on the literal line `---user---`.
+    pub fn render_prompt(
+        &self,
+        stage: Stage,
+        vars: &HashMap<String, String>,
+    ) -> Result<(String, String)> {
+        let name = Self::template_name(stage);
+        let rendered = self.engine.render_str_vars(
+            &name,
+            vars.iter().map(|(k, v)| (k.as_str(), v.as_str())),
+        )
+        .with_context(|| format!("render template for stage {}", stage.name()))?;
+
+        let (system, user) = rendered
+            .split_once("---user---")
+            .ok_or_else(|| anyhow::anyhow!(
+                "template {} missing ---user--- delimiter", name
+            ))?;
+
+        Ok((system.trim().to_owned(), user.trim().to_owned()))
+    }
+
+    /// Map a Stage to its template file name.
+    fn template_name(stage: Stage) -> String {
+        format!("{}.md", stage.name().to_ascii_lowercase())
+    }
+}
+
+impl std::fmt::Debug for StagePromptEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StagePromptEngine").finish()
     }
 }
 
@@ -1489,5 +1552,62 @@ mod tests {
     fn strip_markdown_fences_plain() {
         let input = r#"{"already":"clean"}"#;
         assert_eq!(strip_markdown_fences(input), input);
+    }
+
+    // -----------------------------------------------------------------
+    // StagePromptEngine tests
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn stage_prompt_engine_loads_templates() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("topic_init.md"),
+            "You are a researcher.\n\n---user---\n\nAnalyze: {{ topic }}",
+        ).unwrap();
+
+        let engine = StagePromptEngine::load(tmp.path()).unwrap();
+        assert!(engine.has_template(Stage::TopicInit));
+        assert!(!engine.has_template(Stage::Discussion));
+    }
+
+    #[test]
+    fn stage_prompt_engine_renders_split_prompt() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("topic_init.md"),
+            "You are a {{ domain }} researcher.\n\n---user---\n\nAnalyze: {{ topic }}",
+        ).unwrap();
+
+        let engine = StagePromptEngine::load(tmp.path()).unwrap();
+        let mut vars = HashMap::new();
+        vars.insert("topic".to_owned(), "Higgs boson".to_owned());
+        vars.insert("domain".to_owned(), "hep".to_owned());
+
+        let (system, user) = engine.render_prompt(Stage::TopicInit, &vars).unwrap();
+        assert!(system.contains("hep researcher"));
+        assert!(user.contains("Higgs boson"));
+    }
+
+    #[test]
+    fn stage_prompt_engine_missing_template_errors() {
+        let tmp = TempDir::new().unwrap();
+        let engine = StagePromptEngine::load(tmp.path()).unwrap();
+        let vars: HashMap<String, String> = HashMap::new();
+        assert!(engine.render_prompt(Stage::TopicInit, &vars).is_err());
+    }
+
+    #[test]
+    fn stage_prompt_engine_missing_delimiter_errors() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("topic_init.md"),
+            "System prompt without delimiter",
+        ).unwrap();
+
+        let engine = StagePromptEngine::load(tmp.path()).unwrap();
+        let vars: HashMap<String, String> = HashMap::new();
+        let err = engine.render_prompt(Stage::TopicInit, &vars).unwrap_err();
+        assert!(err.to_string().contains("---user---"));
     }
 }
