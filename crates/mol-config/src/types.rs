@@ -110,9 +110,9 @@ pub struct ResearchConfig {
     /// Analysis type within the domain (e.g. "extraction", "search", "measurement").
     #[serde(default)]
     pub analysis_type: Option<String>,
-    /// Path to stage template directory. Defaults to `hep/templates/stages/`.
-    #[serde(default)]
-    pub templates_dir: Option<String>,
+    /// Root of domain knowledge tree (agents/, conventions/, methodology/, templates/).
+    #[serde(default = "defaults::hep_string")]
+    pub knowledge_root: String,
 }
 
 /// Runtime scheduling and parallelism knobs.
@@ -833,6 +833,9 @@ pub struct PromptsConfig {
 mod defaults {
     pub fn bool_true() -> bool {
         true
+    }
+    pub fn hep_string() -> String {
+        "hep".to_owned()
     }
     pub fn one_u32() -> u32 {
         1

@@ -11,7 +11,7 @@ research:
   quality_threshold: 3.0
   reference_papers: []
   analysis_type: "search"
-  templates_dir: "hep/templates/stages"
+  knowledge_root: "hep"
 
 notifications:
   channel: "console"

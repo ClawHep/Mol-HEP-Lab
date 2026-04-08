@@ -163,10 +163,7 @@ pub async fn execute_pipeline_with_llm(
 
     // Load the prompt engine once at pipeline start.
     let prompt_engine: Option<Arc<StagePromptEngine>> = {
-        let templates_dir = config
-            .templates_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("hep/templates/stages"));
+        let templates_dir = config.knowledge_root.join("templates/stages");
         match StagePromptEngine::load(&templates_dir) {
             Ok(engine) => {
                 info!("Loaded stage templates from {}", templates_dir.display());
@@ -464,10 +461,7 @@ pub async fn execute_iterative_pipeline(
 ) -> Result<Vec<StageResult>> {
     let llm: Option<std::sync::Arc<dyn mol_llm::LlmProvider>> = None;
     let prompt_engine: Option<Arc<StagePromptEngine>> = {
-        let templates_dir = config
-            .templates_dir
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("hep/templates/stages"));
+        let templates_dir = config.knowledge_root.join("templates/stages");
         StagePromptEngine::load(&templates_dir).ok().map(Arc::new)
     };
     let iterative_stages = [

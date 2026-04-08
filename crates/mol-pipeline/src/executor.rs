@@ -31,8 +31,9 @@ pub struct MolConfig {
     pub domain: String,
     /// Analysis type within the domain (e.g. "extraction", "search", "measurement").
     pub analysis_type: Option<String>,
-    /// Path to stage template directory. Defaults to `hep/templates/stages/`.
-    pub templates_dir: Option<PathBuf>,
+    /// Root of domain knowledge tree (agents/, conventions/, methodology/, templates/).
+    /// Defaults to `"hep"`.
+    pub knowledge_root: PathBuf,
 }
 
 impl Default for MolConfig {
@@ -42,7 +43,7 @@ impl Default for MolConfig {
             settings: HashMap::new(),
             domain: "hep".to_owned(),
             analysis_type: None,
-            templates_dir: None,
+            knowledge_root: PathBuf::from("hep"),
         }
     }
 }
