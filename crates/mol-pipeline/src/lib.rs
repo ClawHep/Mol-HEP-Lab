@@ -34,7 +34,7 @@ pub use stages::{
 
 pub use checkpoint::{read_checkpoint, resume_from_checkpoint, write_checkpoint, write_heartbeat};
 
-pub use contracts::{get_contract, validate_inputs, validate_outputs, StageContract};
+pub use contracts::{get_contract, validate_inputs, validate_outputs, ContractOverrides, StageContract};
 
 pub use executor::{execute_stage, MolConfig, StageContext, StageResult};
 

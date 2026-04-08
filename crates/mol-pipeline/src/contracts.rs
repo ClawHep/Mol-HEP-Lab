@@ -8,6 +8,8 @@
 use crate::stages::Stage;
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::Path;
 
 // ---------------------------------------------------------------------------
 // StageContract
@@ -17,9 +19,53 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StageContract {
     /// Artifact names that must be present before this stage can run.
+    #[serde(default)]
     pub required_inputs: Vec<String>,
     /// Artifact names that this stage is expected to produce.
+    #[serde(default)]
     pub expected_outputs: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Contract overrides
+// ---------------------------------------------------------------------------
+
+/// Domain-specific contract overrides loaded from `{knowledge_root}/contracts.yaml`.
+#[derive(Debug, Clone, Default)]
+pub struct ContractOverrides {
+    overrides: HashMap<String, StageContract>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ContractOverridesFile {
+    #[serde(default)]
+    overrides: HashMap<String, StageContract>,
+}
+
+impl ContractOverrides {
+    /// Load contract overrides from `{knowledge_root}/contracts.yaml`.
+    /// Returns empty overrides if the file is missing or unreadable.
+    pub fn load(knowledge_root: &Path) -> Self {
+        let path = knowledge_root.join("contracts.yaml");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(_) => return Self::default(),
+        };
+        match serde_yaml::from_str::<ContractOverridesFile>(&text) {
+            Ok(file) => Self {
+                overrides: file.overrides,
+            },
+            Err(e) => {
+                tracing::warn!(path = %path.display(), error = %e, "failed to parse contracts.yaml");
+                Self::default()
+            }
+        }
+    }
+
+    /// Get the override for a stage, if any.
+    pub fn get(&self, stage: Stage) -> Option<&StageContract> {
+        self.overrides.get(stage.name())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -28,9 +74,15 @@ pub struct StageContract {
 
 /// Return the input/output contract for `stage`.
 ///
+/// If domain `overrides` are provided and contain an entry for this stage,
+/// the override is returned instead of the hardcoded default.
+///
 /// Artifact names are conventional file-name stems; the executor and runner
 /// use these as keys in the artifact registry.
-pub fn get_contract(stage: Stage) -> StageContract {
+pub fn get_contract(stage: Stage, overrides: Option<&ContractOverrides>) -> StageContract {
+    if let Some(ovr) = overrides.and_then(|o| o.get(stage)) {
+        return ovr.clone();
+    }
     match stage {
         // Phase 1: Strategy ------------------------------------------------
         Stage::TopicInit => StageContract {
@@ -227,6 +279,10 @@ fn artifact_satisfied(name: &str, available: &[String]) -> bool {
         ("paper_tex", &["paper.tex"]),
         ("verification_report", &["verification_report.json"]),
         ("paper_final_verified", &["paper_final_verified.md"]),
+        // HEP-specific aliases
+        ("blinding_config", &["blinding_config.json", "blinding_status.json"]),
+        ("systematics_table", &["systematics_table.json", "systematics.json"]),
+        ("experiment_final", &["experiment_final/"]),
     ];
     for &(logical, file_names) in aliases {
         if name == logical {
@@ -241,8 +297,8 @@ fn artifact_satisfied(name: &str, available: &[String]) -> bool {
 ///
 /// Returns `Ok(())` when all required inputs are satisfied, otherwise an
 /// error listing every missing artifact.
-pub fn validate_inputs(stage: Stage, available: &[String]) -> Result<()> {
-    let contract = get_contract(stage);
+pub fn validate_inputs(stage: Stage, available: &[String], overrides: Option<&ContractOverrides>) -> Result<()> {
+    let contract = get_contract(stage, overrides);
     let missing: Vec<&str> = contract
         .required_inputs
         .iter()
@@ -266,8 +322,8 @@ pub fn validate_inputs(stage: Stage, available: &[String]) -> Result<()> {
 ///
 /// Returns `Ok(())` when all expected outputs are present, otherwise an error
 /// listing every absent artifact.
-pub fn validate_outputs(stage: Stage, produced: &[String]) -> Result<()> {
-    let contract = get_contract(stage);
+pub fn validate_outputs(stage: Stage, produced: &[String], overrides: Option<&ContractOverrides>) -> Result<()> {
+    let contract = get_contract(stage, overrides);
     let missing: Vec<&str> = contract
         .expected_outputs
         .iter()
@@ -299,39 +355,79 @@ mod tests {
         use crate::stages::STAGE_SEQUENCE;
         for &stage in STAGE_SEQUENCE {
             // Should not panic
-            let _ = get_contract(stage);
+            let _ = get_contract(stage, None);
         }
     }
 
     #[test]
     fn validate_inputs_passes_when_satisfied() {
         let available: Vec<String> = vec!["topic_brief".into()];
-        assert!(validate_inputs(Stage::ProblemDecompose, &available).is_ok());
+        assert!(validate_inputs(Stage::ProblemDecompose, &available, None).is_ok());
     }
 
     #[test]
     fn validate_inputs_fails_when_missing() {
         let available: Vec<String> = vec![];
-        let err = validate_inputs(Stage::ProblemDecompose, &available).unwrap_err();
+        let err = validate_inputs(Stage::ProblemDecompose, &available, None).unwrap_err();
         assert!(err.to_string().contains("topic_brief"));
     }
 
     #[test]
     fn validate_outputs_passes_when_produced() {
         let produced: Vec<String> = vec!["topic_brief".into(), "research_questions".into()];
-        assert!(validate_outputs(Stage::TopicInit, &produced).is_ok());
+        assert!(validate_outputs(Stage::TopicInit, &produced, None).is_ok());
     }
 
     #[test]
     fn validate_outputs_fails_when_missing() {
         let produced: Vec<String> = vec!["topic_brief".into()];
-        let err = validate_outputs(Stage::TopicInit, &produced).unwrap_err();
+        let err = validate_outputs(Stage::TopicInit, &produced, None).unwrap_err();
         assert!(err.to_string().contains("research_questions"));
     }
 
     #[test]
     fn topic_init_has_no_required_inputs() {
-        let contract = get_contract(Stage::TopicInit);
+        let contract = get_contract(Stage::TopicInit, None);
         assert!(contract.required_inputs.is_empty());
+    }
+
+    #[test]
+    fn contract_overrides_loads_from_yaml() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let yaml = r#"
+overrides:
+  EXPERIMENT_DESIGN:
+    expected_outputs:
+      - custom_plan
+      - custom_criteria
+"#;
+        std::fs::write(dir.path().join("contracts.yaml"), yaml).unwrap();
+        let overrides = ContractOverrides::load(dir.path());
+        let contract = overrides.get(Stage::ExperimentDesign);
+        assert!(contract.is_some());
+        let c = contract.unwrap();
+        assert!(c.expected_outputs.contains(&"custom_plan".to_owned()));
+    }
+
+    #[test]
+    fn contract_overrides_missing_file_returns_empty() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let overrides = ContractOverrides::load(dir.path());
+        assert!(overrides.get(Stage::TopicInit).is_none());
+    }
+
+    #[test]
+    fn get_contract_with_override_uses_override() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let yaml = r#"
+overrides:
+  TOPIC_INIT:
+    expected_outputs:
+      - custom_output
+"#;
+        std::fs::write(dir.path().join("contracts.yaml"), yaml).unwrap();
+        let overrides = ContractOverrides::load(dir.path());
+        let contract = get_contract(Stage::TopicInit, Some(&overrides));
+        assert!(contract.expected_outputs.contains(&"custom_output".to_owned()));
     }
 }

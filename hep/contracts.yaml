@@ -1,0 +1,19 @@
+# HEP domain contract overrides.
+# Only listed stages are overridden; unlisted stages use hardcoded defaults.
+# Stage names use the SCREAMING_SNAKE_CASE convention from Stage::name().
+overrides:
+  EXPERIMENT_DESIGN:
+    expected_outputs:
+      - exp_plan.yaml
+      - success_criteria
+      - blinding_config.json
+  RESULT_ANALYSIS:
+    expected_outputs:
+      - analysis_report
+      - figures
+      - systematics_table.json
+  ITERATIVE_REFINE:
+    expected_outputs:
+      - refined_results
+      - refinement_log
+      - experiment_final

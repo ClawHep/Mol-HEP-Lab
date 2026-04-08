@@ -176,6 +176,9 @@ pub async fn execute_pipeline_with_llm(
         }
     };
 
+    // Load domain contract overrides (if any).
+    let contract_overrides = crate::contracts::ContractOverrides::load(&config.knowledge_root);
+
     let t_start = Instant::now();
     let total_stages = STAGE_SEQUENCE.len();
 
@@ -196,7 +199,7 @@ pub async fn execute_pipeline_with_llm(
             if prior_stage == effective_from {
                 break;
             }
-            let contract = crate::contracts::get_contract(prior_stage);
+            let contract = crate::contracts::get_contract(prior_stage, Some(&contract_overrides));
             let stage_num = prior_stage.as_i32();
             let stage_dir = run_dir.join(format!("stage-{:02}", stage_num));
             if stage_dir.is_dir() {
@@ -250,7 +253,7 @@ pub async fn execute_pipeline_with_llm(
 
         // Pre-flight input validation.
         let available_artifacts: Vec<String> = artifact_registry.keys().cloned().collect();
-        if let Err(e) = crate::contracts::validate_inputs(stage, &available_artifacts) {
+        if let Err(e) = crate::contracts::validate_inputs(stage, &available_artifacts, Some(&contract_overrides)) {
             if NONCRITICAL_STAGES.contains(&stage) || pipeline_config.graceful_degradation {
                 warn!("{} {} — input validation failed (skipping): {}", prefix, stage.name(), e);
                 stages_skipped += 1;
@@ -340,7 +343,7 @@ pub async fn execute_pipeline_with_llm(
 
         // Post-execution output validation (soft warning only).
         if result.status == StageStatus::Done {
-            if let Err(e) = crate::contracts::validate_outputs(stage, &result.artifacts) {
+            if let Err(e) = crate::contracts::validate_outputs(stage, &result.artifacts, Some(&contract_overrides)) {
                 warn!("{} {} — output validation warning: {}", prefix, stage.name(), e);
             }
         }
@@ -557,6 +560,7 @@ pub async fn execute_iterative_pipeline(
         let templates_dir = config.knowledge_root.join("templates/stages");
         StagePromptEngine::load(&templates_dir).ok().map(Arc::new)
     };
+    let contract_overrides = crate::contracts::ContractOverrides::load(&config.knowledge_root);
     let iterative_stages = [
         Stage::ExperimentRun,
         Stage::IterativeRefine,
@@ -586,7 +590,7 @@ pub async fn execute_iterative_pipeline(
         for &stage in &iterative_stages {
             // Pre-flight input validation.
             let available: Vec<String> = iter_artifacts.keys().cloned().collect();
-            if let Err(e) = crate::contracts::validate_inputs(stage, &available) {
+            if let Err(e) = crate::contracts::validate_inputs(stage, &available, Some(&contract_overrides)) {
                 if NONCRITICAL_STAGES.contains(&stage) {
                     warn!(
                         "[{}] {} — input validation failed (noncritical, skipping): {}",
@@ -619,7 +623,7 @@ pub async fn execute_iterative_pipeline(
 
             // Post-execution output validation (soft warning only).
             if result.status == StageStatus::Done {
-                if let Err(e) = crate::contracts::validate_outputs(stage, &result.artifacts) {
+                if let Err(e) = crate::contracts::validate_outputs(stage, &result.artifacts, Some(&contract_overrides)) {
                     warn!("[{}] {} — output validation warning: {}", run_id, stage.name(), e);
                 }
             }
