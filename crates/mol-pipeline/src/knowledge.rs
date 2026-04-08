@@ -58,6 +58,8 @@ pub struct DatasetEntry {
     #[serde(default)]
     pub path: String,
     #[serde(default)]
+    pub url: String,
+    #[serde(default)]
     pub format: String,
     #[serde(default)]
     pub description: String,
@@ -92,7 +94,14 @@ impl DatasetsConfig {
                 } else {
                     format!(" — {}", d.description)
                 };
-                format!("- **{}**: `{}` ({}){}", d.name, d.path, d.format, desc)
+                let location = if !d.path.is_empty() {
+                    format!("`{}`", d.path)
+                } else if !d.url.is_empty() {
+                    d.url.clone()
+                } else {
+                    "(no path)".to_owned()
+                };
+                format!("- **{}**: {} ({}){}", d.name, location, d.format, desc)
             })
             .collect::<Vec<_>>()
             .join("\n")
