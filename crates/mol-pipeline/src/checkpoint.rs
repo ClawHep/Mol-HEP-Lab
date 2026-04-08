@@ -35,8 +35,11 @@ struct HeartbeatRecord {
     pid: u32,
     last_stage: i32,
     last_stage_name: String,
+    phase_label: String,
     run_id: String,
     timestamp: String,
+    status: String,
+    elapsed_secs: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -138,13 +141,23 @@ pub fn resume_from_checkpoint(checkpoint: (Stage, StageStatus)) -> Stage {
 /// Write a heartbeat file for sentinel watchdog monitoring.
 ///
 /// The heartbeat is written in-place (not atomically) as it is advisory only.
-pub async fn write_heartbeat(run_dir: &Path, stage: Stage, run_id: &str) -> Result<()> {
+/// `status` is one of "running", "completed", or "failed".
+pub async fn write_heartbeat(
+    run_dir: &Path,
+    stage: Stage,
+    run_id: &str,
+    status: &str,
+    elapsed_secs: f64,
+) -> Result<()> {
     let record = HeartbeatRecord {
         pid: std::process::id(),
         last_stage: stage.as_i32(),
         last_stage_name: stage.name().to_owned(),
+        phase_label: stage.phase_label().to_owned(),
         run_id: run_id.to_owned(),
         timestamp: Utc::now().to_rfc3339(),
+        status: status.to_owned(),
+        elapsed_secs,
     };
     let json = serde_json::to_string_pretty(&record).context("serialise heartbeat")?;
     let path = run_dir.join("heartbeat.json");
@@ -239,10 +252,19 @@ mod tests {
     #[tokio::test]
     async fn write_heartbeat_creates_file() {
         let dir = TempDir::new().unwrap();
-        write_heartbeat(dir.path(), Stage::ExperimentRun, "run-hb")
+        write_heartbeat(dir.path(), Stage::ExperimentRun, "run-hb", "running", 42.5)
             .await
             .unwrap();
-        assert!(dir.path().join("heartbeat.json").exists());
+        let content = tokio::fs::read_to_string(dir.path().join("heartbeat.json"))
+            .await
+            .unwrap();
+        let record: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(record["last_stage"], 14);
+        assert_eq!(record["last_stage_name"], "EXPERIMENT_RUN");
+        assert_eq!(record["phase_label"], "3.6 Experiment Run");
+        assert_eq!(record["status"], "running");
+        assert_eq!(record["elapsed_secs"], 42.5);
+        assert_eq!(record["run_id"], "run-hb");
     }
 
     #[tokio::test]

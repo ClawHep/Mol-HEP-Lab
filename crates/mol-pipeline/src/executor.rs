@@ -1420,28 +1420,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_topic_init_returns_done() {
+    async fn execute_topic_init_fails_without_engine() {
         let dir = TempDir::new().unwrap();
         let ctx = make_context(dir.path());
         let result = execute_stage(Stage::TopicInit, &ctx).await.unwrap();
-        assert_eq!(result.status, StageStatus::Done);
-        assert!(result.artifacts.contains(&"goal.md".to_owned()));
+        // Without prompt_engine or LLM, stage should fail honestly
+        assert_eq!(result.status, StageStatus::Failed);
     }
 
     #[tokio::test]
     async fn execute_creates_stage_dir() {
         let dir = TempDir::new().unwrap();
         let ctx = make_context(dir.path());
-        execute_stage(Stage::TopicInit, &ctx).await.unwrap();
+        let _ = execute_stage(Stage::TopicInit, &ctx).await.unwrap();
         assert!(dir.path().join("stage-01").exists());
     }
 
     #[tokio::test]
-    async fn stub_result_decision_is_proceed() {
+    async fn execute_sanity_check_fails_without_engine() {
         let dir = TempDir::new().unwrap();
         let ctx = make_context(dir.path());
         let result = execute_stage(Stage::SanityCheck, &ctx).await.unwrap();
-        assert_eq!(result.decision, "proceed");
+        assert_eq!(result.status, StageStatus::Failed);
     }
 
     // -----------------------------------------------------------------

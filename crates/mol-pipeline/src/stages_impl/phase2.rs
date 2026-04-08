@@ -391,19 +391,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn search_strategy_creates_artifacts() {
+    async fn search_strategy_fails_without_engine() {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx(dir.path(), "transformer attention mechanisms");
         let result = execute_search_strategy(Stage::SearchStrategy, &ctx).await;
-
-        assert_eq!(result.status, StageStatus::Done);
-        assert!(result.artifacts.contains(&"search_plan.yaml".to_owned()));
-        assert!(result.artifacts.contains(&"queries.json".to_owned()));
-
-        let stage_dir = ctx.stage_dir(Stage::SearchStrategy);
-        let yaml_content = fs::read_to_string(stage_dir.join("search_plan.yaml")).unwrap();
-        assert!(yaml_content.contains("topic:"));
-        assert!(yaml_content.contains("queries"));
+        // Without prompt engine, stage fails honestly.
+        assert_eq!(result.status, StageStatus::Failed);
     }
 
     #[tokio::test]
@@ -424,34 +417,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn synthesis_creates_artifacts() {
+    async fn synthesis_fails_without_engine() {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx(dir.path(), "protein structure prediction");
         let result = execute_synthesis(Stage::Synthesis, &ctx).await;
-
-        assert_eq!(result.status, StageStatus::Done);
-        assert!(result.artifacts.contains(&"synthesis_report.md".to_owned()));
-        assert!(result.artifacts.contains(&"gap_analysis.json".to_owned()));
-
-        let stage_dir = ctx.stage_dir(Stage::Synthesis);
-        let report = fs::read_to_string(stage_dir.join("synthesis_report.md")).unwrap();
-        assert!(report.contains("Research Gaps"));
-        assert!(report.contains("protein structure prediction"));
+        assert_eq!(result.status, StageStatus::Failed);
     }
 
     #[tokio::test]
-    async fn hypothesis_gen_creates_hypotheses() {
+    async fn hypothesis_gen_fails_without_engine() {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx(dir.path(), "reinforcement learning");
         let result = execute_hypothesis_gen(Stage::HypothesisGen, &ctx).await;
-
-        assert_eq!(result.status, StageStatus::Done);
-        assert!(result.artifacts.contains(&"hypotheses.md".to_owned()));
-
-        let stage_dir = ctx.stage_dir(Stage::HypothesisGen);
-        let hyp = fs::read_to_string(stage_dir.join("hypotheses.md")).unwrap();
-        assert!(hyp.contains("H1:"));
-        assert!(hyp.contains("Falsification Criteria"));
+        assert_eq!(result.status, StageStatus::Failed);
     }
 }
 
