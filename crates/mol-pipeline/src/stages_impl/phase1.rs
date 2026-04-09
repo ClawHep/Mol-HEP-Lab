@@ -8,42 +8,28 @@ use std::fs;
 // TopicInit
 // ---------------------------------------------------------------------------
 
-/// Execute the TopicInit stage.
+/// Execute the TopicInit stage via agentic executor.
 ///
-/// Produces `goal.md` (SMART research goal) and `hardware_profile.json` in the
-/// stage output directory.
+/// Produces `goal.md` (SMART research goal) via agentic extraction, plus
+/// code-driven `hardware_profile.json`.
 pub async fn execute_topic_init(stage: Stage, ctx: &StageContext) -> StageResult {
+    use crate::executor::{ArtifactSpec, execute_agentic};
+
+    let specs = vec![
+        ArtifactSpec {
+            filename: "goal.md".into(),
+            description: "SMART research goal statement — specific, measurable, achievable, \
+                relevant, and time-bound research objective with success criteria".into(),
+        },
+    ];
+
+    let mut result = execute_agentic(stage, ctx, &specs).await;
+    if result.status != StageStatus::Done {
+        return result;
+    }
+
+    // Code-driven: hardware_profile.json
     let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
-
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult::failure(stage, "LLM returned empty response".to_owned());
-    }
-
-    // ---- goal.md -----------------------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("goal.md"), &result) {
-        return StageResult::failure(stage, format!("write goal.md: {e}"));
-    }
-
-    // ---- hardware_profile.json --------------------------------------------
     let hardware_json = serde_json::json!({
         "detected_at": crate::executor::utcnow_iso(),
         "cpu": {
@@ -61,80 +47,37 @@ pub async fn execute_topic_init(stage: Stage, ctx: &StageContext) -> StageResult
     ) {
         return StageResult::failure(stage, format!("write hardware_profile.json: {e}"));
     }
+    result.artifacts.push("hardware_profile.json".to_owned());
 
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["goal.md".to_owned(), "hardware_profile.json".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    result
 }
 
 // ---------------------------------------------------------------------------
 // ProblemDecompose
 // ---------------------------------------------------------------------------
 
-/// Execute the ProblemDecompose stage.
+/// Execute the ProblemDecompose stage via agentic executor.
 ///
-/// Reads `goal.md` from prior stages and produces `problem_tree.md`.
+/// Produces `problem_tree.md` via agentic extraction, plus code-driven
+/// `topic_evaluation.json` with LLM-generated evaluation scores.
 pub async fn execute_problem_decompose(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "problem_tree.md".into(),
+            description: "hierarchical problem decomposition tree — break the research goal \
+                into sub-problems, each with scope, approach, dependencies, and success criteria"
+                .into(),
+        },
+        ArtifactSpec {
+            filename: "topic_evaluation.md".into(),
+            description: "topic feasibility evaluation — scores for feasibility, novelty, \
+                impact, resource requirements, and estimated timeline".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult::failure(stage, "LLM returned empty response".to_owned());
-    }
-
-    // ---- problem_tree.md ---------------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("problem_tree.md"), &result) {
-        return StageResult::failure(stage, format!("write problem_tree.md: {e}"));
-    }
-
-    // ---- topic_evaluation.json --------------------------------------------
-    let eval_json = serde_json::json!({
-        "topic": ctx.config.topic,
-        "feasibility_score": 7,
-        "novelty_score": 7,
-        "impact_score": 7,
-        "resource_requirements": "medium",
-        "estimated_weeks": 8,
-        "notes": "Evaluation after LLM-generated problem decomposition."
-    });
-    if let Err(e) = fs::write(
-        stage_dir.join("topic_evaluation.json"),
-        serde_json::to_string_pretty(&eval_json).unwrap_or_default(),
-    ) {
-        return StageResult::failure(stage, format!("write topic_evaluation.json: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["problem_tree.md".to_owned(), "topic_evaluation.json".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +168,7 @@ mod tests {
                 domain: "hep".to_owned(),
                 analysis_type: None,
                 knowledge_chain: mol_common::KnowledgeChain::new(vec![std::path::PathBuf::from("hep"), std::path::PathBuf::from("generic")]),
+                datasets_dir: String::new(),
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: false,

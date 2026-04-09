@@ -2,9 +2,7 @@
 //! CodeGeneration (3.3), SanityCheck (3.4), ResourcePlanning (3.5),
 //! ExperimentRun (3.6), and IterativeRefine (3.7) stage executors.
 
-use crate::executor::{
-    utcnow_iso, StageContext, StageResult,
-};
+use crate::executor::{StageContext, StageResult};
 use crate::stages::{Stage, StageStatus};
 use std::fs;
 
@@ -12,358 +10,190 @@ use std::fs;
 // ExperimentDesign (GATE)
 // ---------------------------------------------------------------------------
 
-/// Execute the ExperimentDesign stage.
+/// Execute the ExperimentDesign stage via agentic executor.
 ///
-/// Reads hypotheses and synthesis; produces `exp_plan.yaml`.
+/// Reads hypotheses and synthesis; produces `exp_plan.md`.
 /// This is a GATE stage — returns BlockedApproval when not auto-approved.
 pub async fn execute_experiment_design(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
+    use crate::executor::{ArtifactSpec, execute_agentic};
+
+    let specs = vec![
+        ArtifactSpec {
+            filename: "exp_plan.md".into(),
+            description: "experiment design plan — methodology, variables, controls, \
+                datasets, evaluation metrics, and success criteria".into(),
+        },
+    ];
+
+    let mut result = execute_agentic(stage, ctx, &specs).await;
+    if result.status != StageStatus::Done {
+        return result;
     }
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = ctx.prompt_engine.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
-    let engine = match engine {
-        Ok(e) => e,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars)
-        .map_err(|e| anyhow::anyhow!("Template render failed for {}: {e}", stage.name()))
-    {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await
-        .map_err(|e| anyhow::anyhow!("{}: {e}", stage.name()))
-    {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // ---- exp_plan.yaml -----------------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("exp_plan.yaml"), &result) {
-        return StageResult::failure(stage, format!("write exp_plan.yaml: {e}"));
-    }
-
+    // GATE: block for approval if not auto-approved
     if !ctx.auto_approve_gates {
-        return StageResult {
-            stage,
-            status: StageStatus::BlockedApproval,
-            artifacts: vec!["exp_plan.yaml".to_owned()],
-            error: None,
-            decision: "awaiting_approval".to_owned(),
-            elapsed_secs: 0.0,
-        };
+        result.status = StageStatus::BlockedApproval;
+        result.decision = "awaiting_approval".to_owned();
     }
 
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["exp_plan.yaml".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    result
 }
 
 // ---------------------------------------------------------------------------
 // CodebaseSearch
 // ---------------------------------------------------------------------------
 
-/// Execute the CodebaseSearch stage.
+/// Execute the CodebaseSearch stage via agentic executor.
 ///
-/// Reads exp_plan.yaml and produces `codebase_context.json` and
+/// Reads exp_plan.md and produces `codebase_context.json` and
 /// `relevant_files.json`.
 pub async fn execute_codebase_search(stage: Stage, ctx: &StageContext) -> StageResult {
+    use crate::executor::{ArtifactSpec, execute_agentic};
+
     let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    let _ = std::fs::create_dir_all(&stage_dir);
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = ctx.prompt_engine.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
-    let engine = match engine {
-        Ok(e) => e,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars)
-        .map_err(|e| anyhow::anyhow!("Template render failed for {}: {e}", stage.name()))
-    {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, true).await
-        .map_err(|e| anyhow::anyhow!("{}: {e}", stage.name()))
-    {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    if result.is_empty() {
+    // If no codebases setting is configured, skip LLM call and write defaults.
+    // This prevents the ACP agent from exploring the entire filesystem (16+ min hang).
+    let has_codebases = ctx.config.settings.get("codebases_dir")
+        .map(|v| !v.is_empty()).unwrap_or(false);
+    if !has_codebases {
+        tracing::info!("No codebases_dir configured; generating default codebase context");
+        let now = chrono::Utc::now().to_rfc3339();
+        let context = serde_json::json!({
+            "frameworks": ["uproot", "awkward-array", "hist", "mplhep"],
+            "patterns": ["data_loader", "histogram_fill", "cut_flow", "signal_extraction"],
+            "dependencies": ["numpy", "scipy", "matplotlib", "pyhf"],
+            "notes": "No existing codebase configured; experiment will start from scratch using standard HEP Python tools"
+        });
+        let files = serde_json::json!({
+            "generated_at": now,
+            "files": []
+        });
+        let _ = std::fs::write(stage_dir.join("codebase_context.json"), serde_json::to_string_pretty(&context).unwrap());
+        let _ = std::fs::write(stage_dir.join("relevant_files.json"), serde_json::to_string_pretty(&files).unwrap());
         return StageResult {
             stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
+            status: crate::stages::StageStatus::Done,
+            artifacts: vec!["codebase_context.json".into(), "relevant_files.json".into()],
+            error: None,
+            decision: "proceed".into(),
             elapsed_secs: 0.0,
         };
     }
 
-    // ---- codebase_context.json --------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("codebase_context.json"), &result) {
-        return StageResult::failure(stage, format!("write codebase_context.json: {e}"));
-    }
+    let specs = vec![
+        ArtifactSpec {
+            filename: "codebase_context.json".into(),
+            description: "codebase analysis context — relevant frameworks, libraries, \
+                patterns, and code structures identified for the experiment".into(),
+        },
+        ArtifactSpec {
+            filename: "relevant_files.json".into(),
+            description: "relevant files list — files and directories that the experiment \
+                code should reference or build upon".into(),
+        },
+    ];
 
-    // ---- relevant_files.json ----------------------------------------------
-    let relevant_files = serde_json::json!({"generated_at": utcnow_iso(), "files": []});
-    if let Err(e) = fs::write(
-        stage_dir.join("relevant_files.json"),
-        serde_json::to_string_pretty(&relevant_files).unwrap_or_default(),
-    ) {
-        return StageResult::failure(stage, format!("write relevant_files.json: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["codebase_context.json".to_owned(), "relevant_files.json".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
 // CodeGeneration
 // ---------------------------------------------------------------------------
 
-/// Execute the CodeGeneration stage.
+/// Execute the CodeGeneration stage via agentic executor.
 ///
-/// Reads exp_plan.yaml and codebase context; produces `experiment/` directory
-/// with `main.py` and `README.md`, plus `experiment_spec.md`.
+/// Reads exp_plan.md and codebase context; produces `experiment_spec.md`
+/// (experiment code + specification) and `experiment/main.py`.
 pub async fn execute_code_generation(stage: Stage, ctx: &StageContext) -> StageResult {
+    use crate::executor::{ArtifactSpec, execute_agentic};
+
+    let specs = vec![
+        ArtifactSpec {
+            filename: "experiment_spec.md".into(),
+            description: "experiment specification — entry point, dependencies, smoke test \
+                command, and experiment code overview".into(),
+        },
+        ArtifactSpec {
+            filename: "experiment_code.md".into(),
+            description: "complete experiment code — Python script(s) implementing the \
+                experiment with data loading, model training, evaluation, and result output. \
+                Include all code in fenced code blocks with filenames as headers.".into(),
+        },
+    ];
+
+    let mut result = execute_agentic(stage, ctx, &specs).await;
+    if result.status != StageStatus::Done {
+        return result;
+    }
+
+    // Create experiment/ directory and extract main.py from experiment_code.md
     let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
-
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = ctx.prompt_engine.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
-    let engine = match engine {
-        Ok(e) => e,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars)
-        .map_err(|e| anyhow::anyhow!("Template render failed for {}: {e}", stage.name()))
-    {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await
-        .map_err(|e| anyhow::anyhow!("{}: {e}", stage.name()))
-    {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Create experiment/ directory
     let experiment_dir = stage_dir.join("experiment");
     if let Err(e) = fs::create_dir_all(&experiment_dir) {
         return StageResult::failure(stage, format!("create experiment dir: {e}"));
     }
 
-    // ---- experiment/main.py ------------------------------------------------
-    if let Err(e) = fs::write(experiment_dir.join("main.py"), &result) {
+    // Read the generated code artifact and write as main.py
+    let code_content = fs::read_to_string(stage_dir.join("experiment_code.md"))
+        .unwrap_or_default();
+    // Extract the largest code block, or use as-is
+    let main_py = crate::executor::strip_markdown_fences(&code_content);
+    if let Err(e) = fs::write(experiment_dir.join("main.py"), &main_py) {
         return StageResult::failure(stage, format!("write experiment/main.py: {e}"));
     }
+    result.artifacts.push("experiment/".to_owned());
 
-    // ---- experiment_spec.md -----------------------------------------------
-    let topic = ctx.config.topic.as_str();
-    let experiment_spec = format!(
-        "# Experiment Specification\n\n**Topic**: {topic}\n**Generated**: {ts}\n\n\
-         ## Entry Point\n`experiment/main.py`\n\n\
-         ## Smoke Test Command\n```bash\npython experiment/main.py --smoke-test\n```\n",
-        topic = topic,
-        ts = utcnow_iso(),
-    );
-    if let Err(e) = fs::write(stage_dir.join("experiment_spec.md"), &experiment_spec) {
-        return StageResult::failure(stage, format!("write experiment_spec.md: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["experiment/".to_owned(), "experiment_spec.md".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    result
 }
 
 // ---------------------------------------------------------------------------
 // SanityCheck
 // ---------------------------------------------------------------------------
 
-/// Execute the SanityCheck stage.
+/// Execute the SanityCheck stage via agentic executor.
 ///
-/// Uses sanity_check runtime helpers to validate the experiment code.
-/// Produces `sanity_report.json`.
+/// Validates the experiment code and produces `sanity_report.md`.
 pub async fn execute_sanity_check(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = ctx.prompt_engine.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
-    let engine = match engine {
-        Ok(e) => e,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars)
-        .map_err(|e| anyhow::anyhow!("Template render failed for {}: {e}", stage.name()))
-    {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "sanity_report.md".into(),
+            description: "sanity check report — code review findings, potential issues, \
+                dependency checks, and overall pass/fail status".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, true).await
-        .map_err(|e| anyhow::anyhow!("{}: {e}", stage.name()))
-    {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // ---- sanity_report.json -----------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("sanity_report.json"), &result) {
-        return StageResult::failure(stage, format!("write sanity_report.json: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["sanity_report.json".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
 // ResourcePlanning
 // ---------------------------------------------------------------------------
 
-/// Execute the ResourcePlanning stage.
+/// Execute the ResourcePlanning stage via agentic executor.
 ///
-/// Reads exp_plan.yaml and hardware profile; produces `resource_plan.json`
+/// Reads exp_plan.md and hardware profile; produces `resource_plan.md`
 /// and `schedule.json`.
 pub async fn execute_resource_planning(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = ctx.prompt_engine.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
-    let engine = match engine {
-        Ok(e) => e,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars)
-        .map_err(|e| anyhow::anyhow!("Template render failed for {}: {e}", stage.name()))
-    {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "resource_plan.md".into(),
+            description: "resource plan — compute requirements, memory needs, storage, \
+                GPU hours, and cost estimates for the experiment".into(),
+        },
+        ArtifactSpec {
+            filename: "schedule.json".into(),
+            description: "experiment schedule — milestones with dates, dependencies, \
+                and time estimates".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, true).await
-        .map_err(|e| anyhow::anyhow!("{}: {e}", stage.name()))
-    {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // ---- resource_plan.json -----------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("resource_plan.json"), &result) {
-        return StageResult::failure(stage, format!("write resource_plan.json: {e}"));
-    }
-
-    // ---- schedule.json ----------------------------------------------------
-    let schedule = serde_json::json!({"generated_at": utcnow_iso(), "milestones": [], "total_days": 0, "total_gpu_hours": 0});
-    if let Err(e) = fs::write(
-        stage_dir.join("schedule.json"),
-        serde_json::to_string_pretty(&schedule).unwrap_or_default(),
-    ) {
-        return StageResult::failure(stage, format!("write schedule.json: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["resource_plan.json".to_owned(), "schedule.json".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 
@@ -371,143 +201,79 @@ pub async fn execute_resource_planning(stage: Stage, ctx: &StageContext) -> Stag
 // ExperimentRun (3.6)
 // ---------------------------------------------------------------------------
 
-/// Execute the ExperimentRun stage.
+/// Execute the ExperimentRun stage via agentic executor.
 ///
-/// Uses experiment_run runtime helpers to set up the run environment.
-/// Produces `runs/` directory structure and `runs/run_report.json`.
+/// Produces `run_report.md` with experiment execution results and logs.
 pub async fn execute_experiment_run(stage: Stage, ctx: &StageContext) -> StageResult {
+    use crate::executor::{ArtifactSpec, execute_agentic};
+
+    let specs = vec![
+        ArtifactSpec {
+            filename: "run_report.md".into(),
+            description: "experiment run report — execution results including metrics, \
+                hyperparameters used, training logs summary, and any errors encountered".into(),
+        },
+    ];
+
+    let mut result = execute_agentic(stage, ctx, &specs).await;
+    if result.status != StageStatus::Done {
+        return result;
+    }
+
+    // Create runs/ directory structure and move report there
     let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
-
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = ctx.prompt_engine.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
-    let engine = match engine {
-        Ok(e) => e,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars)
-        .map_err(|e| anyhow::anyhow!("Template render failed for {}: {e}", stage.name()))
-    {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, true).await
-        .map_err(|e| anyhow::anyhow!("{}: {e}", stage.name()))
-    {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Create runs/ directory and write report
     let runs_dir = stage_dir.join("runs");
     if let Err(e) = fs::create_dir_all(&runs_dir) {
         return StageResult::failure(stage, format!("create runs dir: {e}"));
     }
-    if let Err(e) = fs::write(runs_dir.join("run_report.json"), &result) {
-        return StageResult::failure(stage, format!("write run_report.json: {e}"));
-    }
+    // Copy run_report.md into runs/ as well
+    let report_content = fs::read_to_string(stage_dir.join("run_report.md")).unwrap_or_default();
+    let _ = fs::write(runs_dir.join("run_report.md"), &report_content);
+    result.artifacts.push("runs/".to_owned());
 
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["runs/".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    result
 }
 
 // ---------------------------------------------------------------------------
 // IterativeRefine
 // ---------------------------------------------------------------------------
 
-/// Execute the IterativeRefine stage.
+/// Execute the IterativeRefine stage via agentic executor.
 ///
-/// Uses iterative_refine runtime helpers; produces `refinement_log.json` and
-/// `experiment_final/` directory.
+/// Produces `refinement_log.md` and `refined_code.md` with improved experiment code.
 pub async fn execute_iterative_refine(stage: Stage, ctx: &StageContext) -> StageResult {
+    use crate::executor::{ArtifactSpec, execute_agentic};
+
+    let specs = vec![
+        ArtifactSpec {
+            filename: "refinement_log.md".into(),
+            description: "iterative refinement log — changes made, metrics before/after, \
+                convergence status, and remaining issues".into(),
+        },
+        ArtifactSpec {
+            filename: "refined_code.md".into(),
+            description: "refined experiment code — improved Python code with all refinements \
+                applied, in fenced code blocks".into(),
+        },
+    ];
+
+    let mut result = execute_agentic(stage, ctx, &specs).await;
+    if result.status != StageStatus::Done {
+        return result;
+    }
+
+    // Create experiment_final/ directory with refined code
     let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
-
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = ctx.prompt_engine.as_ref()
-        .ok_or_else(|| anyhow::anyhow!("No prompt engine configured for {}", stage.name()));
-    let engine = match engine {
-        Ok(e) => e,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars)
-        .map_err(|e| anyhow::anyhow!("Template render failed for {}: {e}", stage.name()))
-    {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, true).await
-        .map_err(|e| anyhow::anyhow!("{}: {e}", stage.name()))
-    {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, e.to_string()),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Create experiment_final/ directory
     let final_dir = stage_dir.join("experiment_final");
     if let Err(e) = fs::create_dir_all(&final_dir) {
         return StageResult::failure(stage, format!("create experiment_final dir: {e}"));
     }
+    let refined = fs::read_to_string(stage_dir.join("refined_code.md")).unwrap_or_default();
+    let main_py = crate::executor::strip_markdown_fences(&refined);
+    let _ = fs::write(final_dir.join("main.py"), &main_py);
+    result.artifacts.push("experiment_final/".to_owned());
 
-    // ---- refinement_log.json -----------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("refinement_log.json"), &result) {
-        return StageResult::failure(stage, format!("write refinement_log.json: {e}"));
-    }
-
-    // Write a minimal final main.py placeholder
-    let topic = ctx.config.topic.as_str();
-    if let Err(e) = fs::write(final_dir.join("main.py"), format!("# Final refined experiment: {topic}\n")) {
-        return StageResult::failure(stage, format!("write experiment_final/main.py: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec![
-            "refinement_log.json".to_owned(),
-            "experiment_final/".to_owned(),
-        ],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +297,7 @@ mod tests {
                 domain: "hep".to_owned(),
                 analysis_type: None,
                 knowledge_chain: mol_common::KnowledgeChain::new(vec![std::path::PathBuf::from("hep"), std::path::PathBuf::from("generic")]),
+                datasets_dir: String::new(),
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: auto_approve,

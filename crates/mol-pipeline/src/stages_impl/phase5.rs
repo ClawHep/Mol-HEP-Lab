@@ -3,7 +3,7 @@
 //! KnowledgeArchive (5.6), ExportPublish (5.7), and CitationVerify (5.8) stage executors.
 
 use crate::executor::{
-    extract_paper_title, read_prior_artifact_pub, utcnow_iso, StageContext, StageResult,
+    read_prior_artifact_pub, utcnow_iso, StageContext, StageResult,
 };
 use crate::stages::{Stage, StageStatus};
 use std::fs;
@@ -12,232 +12,92 @@ use std::fs;
 // PaperOutline
 // ---------------------------------------------------------------------------
 
-/// Execute the PaperOutline stage.
+/// Execute the PaperOutline stage via agentic executor.
 ///
 /// Reads hypotheses, synthesis, and analysis; produces `paper_outline.md`.
 pub async fn execute_paper_outline(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "paper_outline.md".into(),
+            description: "academic paper outline — section structure with title, abstract \
+                sketch, introduction points, methodology overview, results plan, and \
+                conclusion direction".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Write artifact
-    if let Err(e) = fs::write(stage_dir.join("paper_outline.md"), &result) {
-        return StageResult::failure(stage, format!("write paper_outline.md: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["paper_outline.md".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
 // PaperDraft
 // ---------------------------------------------------------------------------
 
-/// Execute the PaperDraft stage.
+/// Execute the PaperDraft stage via agentic executor.
 ///
 /// Reads outline, knowledge cards, analysis, and figures; produces `paper_draft.md`.
 pub async fn execute_paper_draft(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "paper_draft.md".into(),
+            description: "full academic paper draft — title, abstract, introduction, \
+                related work, methodology, experiments, results, discussion, conclusion, \
+                and references".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Write artifact
-    if let Err(e) = fs::write(stage_dir.join("paper_draft.md"), &result) {
-        return StageResult::failure(stage, format!("write paper_draft.md: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["paper_draft.md".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
 // PeerReview
 // ---------------------------------------------------------------------------
 
-/// Execute the PeerReview stage.
+/// Execute the PeerReview stage via agentic executor.
 ///
-/// Reads paper draft; produces `review_comments.json` with simulated multi-reviewer feedback.
+/// Reads paper draft; produces `review_comments.md` with simulated multi-reviewer feedback.
 pub async fn execute_peer_review(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "review_comments.md".into(),
+            description: "peer review comments — simulated multi-reviewer feedback with \
+                reviewer roles, per-section comments, severity ratings, and overall scores".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, true).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Write artifact
-    if let Err(e) = fs::write(stage_dir.join("review_comments.json"), &result) {
-        return StageResult::failure(stage, format!("write review_comments.json: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["review_comments.json".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
 // PaperRevision
 // ---------------------------------------------------------------------------
 
-/// Execute the PaperRevision stage.
+/// Execute the PaperRevision stage via agentic executor.
 ///
 /// Reads paper draft and review comments; produces `paper_revised.md` and
 /// `revision_notes.md`.
 pub async fn execute_paper_revision(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    let topic = ctx.config.topic.as_str();
+    let specs = vec![
+        ArtifactSpec {
+            filename: "paper_revised.md".into(),
+            description: "revised paper — full paper with all reviewer comments addressed, \
+                improvements made, and content strengthened".into(),
+        },
+        ArtifactSpec {
+            filename: "revision_notes.md".into(),
+            description: "revision notes — point-by-point response to each reviewer comment, \
+                what was changed, and rationale for changes or rebuttals".into(),
+        },
+    ];
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Write artifacts
-    if let Err(e) = fs::write(stage_dir.join("paper_revised.md"), &result) {
-        return StageResult::failure(stage, format!("write paper_revised.md: {e}"));
-    }
-    let revision_notes = format!(
-        "# Revision Notes\n\n**Topic**: {topic}\n**Generated**: {ts}\n\n\
-         Revisions generated by LLM agent based on peer review feedback.\n",
-        topic = topic,
-        ts = utcnow_iso(),
-    );
-    if let Err(e) = fs::write(stage_dir.join("revision_notes.md"), &revision_notes) {
-        return StageResult::failure(stage, format!("write revision_notes.md: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["paper_revised.md".to_owned(), "revision_notes.md".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 
@@ -245,84 +105,33 @@ pub async fn execute_paper_revision(stage: Stage, ctx: &StageContext) -> StageRe
 // QualityGate (5.5 GATE)
 // ---------------------------------------------------------------------------
 
-/// Execute the QualityGate stage.
+/// Execute the QualityGate stage via agentic executor.
 ///
-/// Reads the revised paper; produces `quality_report.json`.
-/// Returns BlockedApproval if quality score < 6 and not auto-approved.
+/// Reads the revised paper; produces `quality_report.md`.
+/// Returns BlockedApproval if not auto-approved.
 pub async fn execute_quality_gate(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
+    use crate::executor::{ArtifactSpec, execute_agentic};
+
+    let specs = vec![
+        ArtifactSpec {
+            filename: "quality_report.md".into(),
+            description: "quality gate report — overall quality score (1-10), passes boolean, \
+                per-section scores, identified issues, and recommendations".into(),
+        },
+    ];
+
+    let mut result = execute_agentic(stage, ctx, &specs).await;
+    if result.status != StageStatus::Done {
+        return result;
     }
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, true).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Write artifact
-    if let Err(e) = fs::write(stage_dir.join("quality_report.json"), &result) {
-        return StageResult::failure(stage, format!("write quality_report.json: {e}"));
-    }
-
-    // Parse passes from LLM output to enforce gate logic
-    let passes = serde_json::from_str::<serde_json::Value>(&result)
-        .ok()
-        .and_then(|v| v["passes"].as_bool())
-        .unwrap_or(true);
-
-    if !passes && !ctx.auto_approve_gates {
-        return StageResult {
-            stage,
-            status: StageStatus::BlockedApproval,
-            artifacts: vec!["quality_report.json".to_owned()],
-            error: None,
-            decision: "awaiting_approval".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
+    // GATE: block for approval if not auto-approved
     if !ctx.auto_approve_gates {
-        return StageResult {
-            stage,
-            status: StageStatus::BlockedApproval,
-            artifacts: vec!["quality_report.json".to_owned()],
-            error: None,
-            decision: "awaiting_approval".to_owned(),
-            elapsed_secs: 0.0,
-        };
+        result.status = StageStatus::BlockedApproval;
+        result.decision = "awaiting_approval".to_owned();
     }
 
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["quality_report.json".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -398,134 +207,47 @@ pub async fn execute_knowledge_archive(stage: Stage, ctx: &StageContext) -> Stag
 // ExportPublish
 // ---------------------------------------------------------------------------
 
-/// Execute the ExportPublish stage.
+/// Execute the ExportPublish stage via agentic executor.
 ///
-/// Reads the final paper; produces `paper_final.md` and `paper.tex`.
+/// Produces `paper_final.md` (polished final paper) and `paper.tex` (LaTeX export).
 pub async fn execute_export_publish(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    let topic = ctx.config.topic.as_str();
+    let specs = vec![
+        ArtifactSpec {
+            filename: "paper_final.md".into(),
+            description: "final polished paper — publication-ready markdown with proper \
+                formatting, citations, figure references, and clean structure".into(),
+        },
+        ArtifactSpec {
+            filename: "paper.tex".into(),
+            description: "LaTeX export of the paper — complete .tex file with \\documentclass, \
+                \\title, \\author, \\begin{document}, all sections, and \\end{document}".into(),
+        },
+    ];
 
-    // Render prompt from template engine
-    // The template handles missing prior artifacts via {{ paper_revised | default(value="") }}
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Write paper_final.md with export header
-    let paper_final_with_header = format!(
-        "<!-- Mol-HEP-Lab Final Paper Export | {} -->\n<!-- Run: {} | Topic: {} -->\n\n{}",
-        utcnow_iso(),
-        ctx.run_id,
-        topic,
-        result
-    );
-    if let Err(e) = fs::write(stage_dir.join("paper_final.md"), &paper_final_with_header) {
-        return StageResult::failure(stage, format!("write paper_final.md: {e}"));
-    }
-
-    // Write paper.tex skeleton
-    let title = extract_paper_title(&result);
-    let title_escaped = title.replace('_', r"\_").replace('&', r"\&").replace('%', r"\%");
-    let topic_escaped = topic.replace('_', r"\_");
-    let paper_tex = format!(
-        "\\documentclass{{article}}\n\\title{{{}}}\n\\author{{Authors}}\n\\date{{{}}}\n\
-         \\begin{{document}}\n\\maketitle\n[Content from paper\\_final.md]\n\\end{{document}}\n",
-        if title_escaped.is_empty() { format!("Advances in {}", topic_escaped) } else { title_escaped },
-        utcnow_iso()
-    );
-    if let Err(e) = fs::write(stage_dir.join("paper.tex"), &paper_tex) {
-        return StageResult::failure(stage, format!("write paper.tex: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["paper_final.md".to_owned(), "paper.tex".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
 // CitationVerify
 // ---------------------------------------------------------------------------
 
-/// Execute the CitationVerify stage.
+/// Execute the CitationVerify stage via agentic executor.
 ///
-/// Reads the paper and references; produces `verification_report.json`.
+/// Reads the paper and references; produces `verification_report.md`.
 pub async fn execute_citation_verify(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "verification_report.md".into(),
+            description: "citation verification report — each citation checked for existence, \
+                correctness, and proper formatting with overall verification status".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, true).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // Write artifact
-    if let Err(e) = fs::write(stage_dir.join("verification_report.json"), &result) {
-        return StageResult::failure(stage, format!("write verification_report.json: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["verification_report.json".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
@@ -549,6 +271,7 @@ mod tests {
                 domain: "hep".to_owned(),
                 analysis_type: None,
                 knowledge_chain: mol_common::KnowledgeChain::new(vec![std::path::PathBuf::from("hep"), std::path::PathBuf::from("generic")]),
+                datasets_dir: String::new(),
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: auto_approve,

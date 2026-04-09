@@ -10,104 +10,32 @@ use std::fs;
 // SearchStrategy
 // ---------------------------------------------------------------------------
 
-/// Execute the SearchStrategy stage.
+/// Execute the SearchStrategy stage via agentic executor.
 ///
-/// Produces `search_plan.yaml`, `sources.json`, and `queries.json`.
+/// Produces `search_plan.md`, `sources.json`, and `queries.json` — all via
+/// agentic extraction so the LLM actively generates structured search artifacts.
 pub async fn execute_search_strategy(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
-
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // ---- search_plan.yaml --------------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("search_plan.yaml"), &result) {
-        return StageResult::failure(stage, format!("write search_plan.yaml: {e}"));
-    }
-
-    // ---- sources.json ------------------------------------------------------
-    let sources_json = serde_json::json!([
-        {
-            "id": "arxiv",
-            "name": "arXiv",
-            "url": "https://arxiv.org",
-            "api_endpoint": "https://export.arxiv.org/api/query",
-            "enabled": true,
-            "categories": ["cs.LG", "cs.AI", "stat.ML", "physics", "q-bio"]
+    let specs = vec![
+        ArtifactSpec {
+            filename: "search_plan.md".into(),
+            description: "literature search strategy plan — databases to query, search terms, \
+                inclusion/exclusion criteria, and expected result counts".into(),
         },
-        {
-            "id": "semantic_scholar",
-            "name": "Semantic Scholar",
-            "url": "https://www.semanticscholar.org",
-            "api_endpoint": "https://api.semanticscholar.org/graph/v1",
-            "enabled": true
+        ArtifactSpec {
+            filename: "sources.json".into(),
+            description: "academic sources to search — list of sources with id, name, url, \
+                api_endpoint, enabled flag, and optional categories".into(),
         },
-        {
-            "id": "pubmed",
-            "name": "PubMed",
-            "url": "https://pubmed.ncbi.nlm.nih.gov",
-            "api_endpoint": "https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
-            "enabled": false
-        }
-    ]);
-    if let Err(e) = fs::write(
-        stage_dir.join("sources.json"),
-        serde_json::to_string_pretty(&sources_json).unwrap_or_default(),
-    ) {
-        return StageResult::failure(stage, format!("write sources.json: {e}"));
-    }
+        ArtifactSpec {
+            filename: "queries.json".into(),
+            description: "search queries to execute — list of query strings with \
+                target databases and expected relevance".into(),
+        },
+    ];
 
-    // ---- queries.json ------------------------------------------------------
-    let queries_json_wrapper = serde_json::json!({
-        "generated_at": utcnow_iso(),
-        "topic": ctx.config.topic.as_str(),
-        "queries": []
-    });
-    if let Err(e) = fs::write(
-        stage_dir.join("queries.json"),
-        serde_json::to_string_pretty(&queries_json_wrapper).unwrap_or_default(),
-    ) {
-        return StageResult::failure(stage, format!("write queries.json: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec![
-            "search_plan.yaml".to_owned(),
-            "sources.json".to_owned(),
-            "queries.json".to_owned(),
-        ],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
@@ -116,52 +44,19 @@ pub async fn execute_search_strategy(stage: Stage, ctx: &StageContext) -> StageR
 
 /// Execute the LiteratureCollect stage.
 ///
-/// Produces `candidates.jsonl` with synthetic placeholder paper entries.
+/// Produces `candidates.md` via agentic two-phase execution.
 pub async fn execute_literature_collect(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "candidates.md".into(),
+            description: "literature candidates — each with: paper_id, title, authors, year, \
+                venue, abstract, relevance_score (0-1)".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    if let Err(e) = fs::write(stage_dir.join("candidates.jsonl"), &result) {
-        return StageResult::failure(stage, format!("write candidates.jsonl: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["candidates.jsonl".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
@@ -221,8 +116,10 @@ pub async fn execute_literature_screen(stage: Stage, ctx: &StageContext) -> Stag
         }
     }
 
-    // If no candidates were found, create fallback screened papers
-    if screened.is_empty() && candidates_text.is_empty() {
+    // If no valid JSON lines were parsed, create fallback screened papers.
+    // This triggers both when the file is empty AND when it contains only
+    // narrative text (Friction Fix #7: cascading failure from non-JSONL content).
+    if screened.is_empty() && excluded.is_empty() {
         let topic = ctx.config.topic.as_str();
         let now = utcnow_iso();
         screened.push(serde_json::json!({
@@ -297,68 +194,26 @@ pub async fn execute_literature_screen(stage: Stage, ctx: &StageContext) -> Stag
 
 /// Execute the KnowledgeExtract stage.
 ///
-/// Reads screened papers and produces `knowledge_cards.json` and
+/// Reads screened papers and produces `knowledge_cards.md` and
 /// `citation_map.json`.
 pub async fn execute_knowledge_extract(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "knowledge_cards.md".into(),
+            description: "structured knowledge cards extracted from literature — each card \
+                has: card_id, source, category, content, numerical_values, and applicability"
+                .into(),
+        },
+        ArtifactSpec {
+            filename: "citation_map.json".into(),
+            description: "citation graph with nodes (papers) and edges (citations between them)"
+                .into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, true).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    if let Err(e) = fs::write(stage_dir.join("knowledge_cards.json"), &result) {
-        return StageResult::failure(stage, format!("write knowledge_cards.json: {e}"));
-    }
-
-    let citation_map = serde_json::json!({
-        "topic": ctx.config.topic.as_str(),
-        "nodes": [],
-        "edges": []
-    });
-    if let Err(e) = fs::write(
-        stage_dir.join("citation_map.json"),
-        serde_json::to_string_pretty(&citation_map).unwrap_or_default(),
-    ) {
-        return StageResult::failure(stage, format!("write citation_map.json: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec![
-            "knowledge_cards.json".to_owned(),
-            "citation_map.json".to_owned(),
-        ],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
@@ -382,6 +237,7 @@ mod tests {
                 domain: "hep".to_owned(),
                 analysis_type: None,
                 knowledge_chain: mol_common::KnowledgeChain::new(vec![std::path::PathBuf::from("hep"), std::path::PathBuf::from("generic")]),
+                datasets_dir: String::new(),
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: true,
@@ -440,125 +296,40 @@ mod tests {
 
 /// Execute the Synthesis stage.
 ///
-/// Reads knowledge cards from prior stages and produces `synthesis_report.md`
-/// and `gap_analysis.json`.
+/// Reads knowledge cards from prior stages and produces `synthesis_report.md`.
 pub async fn execute_synthesis(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "synthesis_report.md".into(),
+            description: "literature synthesis report — key themes, methodological trends, \
+                consensus findings, contradictions across reviewed papers, identified research \
+                gaps, clusters of related work, and recommended focus areas".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // ---- synthesis_report.md -----------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("synthesis_report.md"), &result) {
-        return StageResult::failure(stage, format!("write synthesis_report.md: {e}"));
-    }
-
-    // ---- gap_analysis.json ------------------------------------------------
-    let gap_analysis = serde_json::json!({
-        "topic": ctx.config.topic.as_str(),
-        "generated_at": utcnow_iso(),
-        "total_papers_reviewed": 0,
-        "gaps": [],
-        "recommended_focus": "",
-        "clusters": []
-    });
-    if let Err(e) = fs::write(
-        stage_dir.join("gap_analysis.json"),
-        serde_json::to_string_pretty(&gap_analysis).unwrap_or_default(),
-    ) {
-        return StageResult::failure(stage, format!("write gap_analysis.json: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["synthesis_report.md".to_owned(), "gap_analysis.json".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
 // HypothesisGen
 // ---------------------------------------------------------------------------
 
-/// Execute the HypothesisGen stage.
-///
-/// Reads the synthesis report and produces `hypotheses.md`.
+/// Execute the HypothesisGen stage via agentic executor.
 pub async fn execute_hypothesis_gen(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Render prompt from template engine
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => return StageResult::failure(stage, format!("No prompt engine configured for {}", stage.name())),
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => return StageResult::failure(stage, format!("Template render failed for {}: {e}", stage.name())),
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "hypotheses.md".into(),
+            description: "testable research hypotheses derived from the synthesis and gap \
+                analysis — each hypothesis should have: statement, rationale, proposed test, \
+                expected outcome, and falsification criteria".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(r) => r,
-        Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
-    };
-    if result.is_empty() {
-        return StageResult {
-            stage,
-            status: StageStatus::Failed,
-            artifacts: vec![],
-            error: Some("LLM returned empty response".to_owned()),
-            decision: "blocked".to_owned(),
-            elapsed_secs: 0.0,
-        };
-    }
-
-    // ---- hypotheses.md ----------------------------------------------------
-    if let Err(e) = fs::write(stage_dir.join("hypotheses.md"), &result) {
-        return StageResult::failure(stage, format!("write hypotheses.md: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["hypotheses.md".to_owned()],
-        error: None,
-        decision: "proceed".to_owned(),
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------

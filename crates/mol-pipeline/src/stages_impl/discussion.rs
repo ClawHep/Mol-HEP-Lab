@@ -5,66 +5,28 @@
 
 use crate::executor::{StageContext, StageResult};
 use crate::stages::{Stage, StageStatus};
-use std::fs;
 
 // ---------------------------------------------------------------------------
 // Discussion
 // ---------------------------------------------------------------------------
 
-/// Execute the Discussion stage.
+/// Execute the Discussion stage via agentic executor.
 ///
-/// Uses the discussion template + LLM to produce `discussion_notes.md` with a
-/// structured multi-agent discussion transcript. Same pattern as all other stages.
+/// Produces `discussion_notes.md` with a structured multi-agent discussion
+/// transcript covering synthesis, hypotheses, and experiment findings.
 pub async fn execute_discussion(stage: Stage, ctx: &StageContext) -> StageResult {
-    let stage_dir = ctx.stage_dir(stage);
-    if let Err(e) = fs::create_dir_all(&stage_dir) {
-        return StageResult::failure(stage, format!("create stage dir: {e}"));
-    }
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    // Template + LLM — same pattern as all other stages
-    let vars = ctx.template_vars(stage);
-    let engine = match ctx.prompt_engine.as_ref() {
-        Some(e) => e,
-        None => {
-            return StageResult::failure(
-                stage,
-                format!("No prompt engine configured for {}", stage.name()),
-            );
-        }
-    };
-    let (system, user) = match engine.render_prompt(stage, &vars) {
-        Ok(pair) => pair,
-        Err(e) => {
-            return StageResult::failure(stage, format!("Template render error: {e}"));
-        }
-    };
+    let specs = vec![
+        ArtifactSpec {
+            filename: "discussion_notes.md".into(),
+            description: "multi-perspective discussion transcript — structured debate between \
+                virtual experts covering methodology strengths/weaknesses, result interpretation, \
+                implications, limitations, and future directions".into(),
+        },
+    ];
 
-    // Call LLM — honest failure, no fallbacks
-    let result = match crate::executor::llm_generate(ctx, &system, &user, false).await {
-        Ok(text) => text,
-        Err(e) => {
-            return StageResult::failure(stage, format!("LLM call failed: {e}"));
-        }
-    };
-
-    if result.is_empty() {
-        return StageResult::failure(stage, "LLM returned empty discussion".to_owned());
-    }
-
-    // Write discussion_notes.md
-    let notes_path = stage_dir.join("discussion_notes.md");
-    if let Err(e) = fs::write(&notes_path, &result) {
-        return StageResult::failure(stage, format!("write discussion_notes.md: {e}"));
-    }
-
-    StageResult {
-        stage,
-        status: StageStatus::Done,
-        artifacts: vec!["discussion_notes.md".into()],
-        decision: "proceed".into(),
-        error: None,
-        elapsed_secs: 0.0,
-    }
+    execute_agentic(stage, ctx, &specs).await
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +50,7 @@ mod tests {
                 domain: "hep".to_owned(),
                 analysis_type: None,
                 knowledge_chain: mol_common::KnowledgeChain::new(vec![std::path::PathBuf::from("hep"), std::path::PathBuf::from("generic")]),
+                datasets_dir: String::new(),
             },
             prior_artifacts: HashMap::new(),
             auto_approve_gates: false,

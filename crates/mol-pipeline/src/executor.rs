@@ -330,10 +330,6 @@ pub struct ArtifactSpec {
     pub filename: String,
     /// Description shown in the output_spec prompt section.
     pub description: String,
-    /// Legacy format field — kept until phase stages are updated in Tasks 5-9.
-    pub format: ArtifactFormat,
-    /// Legacy schema hint — kept until phase stages are updated in Tasks 5-9.
-    pub schema_hint: String,
 }
 
 /// Generate the `output_spec` template variable content from artifact specs.
@@ -408,14 +404,6 @@ pub fn extract_decision_from_md(content: &str) -> &'static str {
     }
 }
 
-// Legacy type alias — kept temporarily so phase stages compile until they're updated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArtifactFormat {
-    Json,
-    Jsonl,
-    Yaml,
-    Markdown,
-}
 
 /// Execute a stage by sending a prompt and letting the agent write files to disk.
 ///
@@ -1685,8 +1673,6 @@ mod tests {
         ArtifactSpec {
             filename: filename.into(),
             description: desc.into(),
-            format: ArtifactFormat::Markdown,
-            schema_hint: String::new(),
         }
     }
 
