@@ -238,19 +238,21 @@ impl StageContext {
             ("goal", "goal.md"),
             ("hypotheses", "hypotheses.md"),
             ("synthesis_report", "synthesis_report.md"),
-            ("experiment_plan", "exp_plan.yaml"),
+            ("experiment_plan", "exp_plan.md"),
             ("analysis_report", "analysis_report.md"),
-            ("decision_record", "decision_record.json"),
-            ("knowledge_summary", "knowledge_summary.json"),
+            ("decision_record", "decision_record.md"),
+            ("knowledge_summary", "knowledge_summary.md"),
             ("paper_outline", "paper_outline.md"),
             ("paper_draft", "paper_draft.md"),
             ("paper_revised", "paper_revised.md"),
-            ("review_comments", "review_comments.json"),
             ("problem_tree", "problem_tree.md"),
-            ("search_queries", "search_plan.yaml"),
-            ("knowledge_cards", "knowledge_cards.json"),
-            ("sanity_report", "sanity_report.json"),
-            ("resource_plan", "resource_plan.json"),
+            ("search_plan", "search_plan.md"),
+            ("knowledge_cards", "knowledge_cards.md"),
+            ("sanity_report", "sanity_report.md"),
+            ("resource_plan", "resource_plan.md"),
+            ("review_comments", "review_comments.md"),
+            ("topic_evaluation", "topic_evaluation.md"),
+            ("run_report", "run_report.md"),
         ];
         for (key, filename) in artifact_files {
             if let Some(content) = read_prior_artifact(&self.run_dir, filename) {
@@ -415,15 +417,11 @@ pub enum ArtifactFormat {
     Markdown,
 }
 
-/// Execute a stage in two phases:
+/// Execute a stage by sending a prompt and letting the agent write files to disk.
 ///
-/// 1. **Analysis phase** — send the main prompt, let the LLM reason freely.
-/// 2. **Extraction phase** — for each artifact, send a focused prompt asking
-///    the LLM to produce *just that artifact* from its analysis. Validate the
-///    result; retry once if invalid.
-///
-/// This is model-agnostic: Phase 1 can produce any format; Phase 2 actively
-/// pulls the structured data the pipeline needs.
+/// The agent receives `output_spec` in the prompt telling it which files to create.
+/// After the LLM call, the executor checks disk for each expected file.
+/// Falls back to writing the response text for API-only providers.
 pub async fn execute_agentic(
     stage: Stage,
     ctx: &StageContext,
@@ -441,8 +439,11 @@ pub async fn execute_agentic(
         }
     }
 
-    // Render the main analysis prompt
-    let vars = ctx.template_vars(stage);
+    // Build template vars — includes output_spec with file-writing instructions
+    let mut vars = ctx.template_vars(stage);
+    vars.insert("output_spec".to_owned(), build_output_spec(artifact_specs));
+
+    // Render the prompt
     let engine = match ctx.prompt_engine.as_ref() {
         Some(e) => e,
         None => return StageResult::failure(stage, format!("No prompt engine for {}", stage.name())),
@@ -452,389 +453,54 @@ pub async fn execute_agentic(
         Err(e) => return StageResult::failure(stage, format!("Template render: {e}")),
     };
 
-    // Phase 1: free-form analysis
-    let raw_analysis = match llm_generate(ctx, &system, &user, false).await {
-        Ok(r) if !r.is_empty() => r,
-        Ok(_) => return StageResult::failure(stage, "LLM returned empty analysis"),
+    // Send prompt — agent writes files to stage_dir via its Write/Bash tools
+    let response = match llm_generate(ctx, stage, &system, &user).await {
+        Ok(r) => r,
         Err(e) => return StageResult::failure(stage, format!("{}: {e}", stage.name())),
     };
 
-    // Clean ACP/LLM noise from the analysis before Phase 2 extraction
-    let analysis = strip_llm_noise(&raw_analysis);
-
-    // Phase 2: extract each artifact
-    let mut produced: Vec<String> = Vec::new();
+    // Check which files the agent wrote to disk
+    let mut produced = Vec::new();
+    let mut fallback_used = false;
     for spec in artifact_specs {
-        let raw_content = match extract_artifact(ctx, &analysis, spec).await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!(
-                    artifact = %spec.filename,
-                    error = %e,
-                    "Failed to extract artifact; writing cleaned analysis"
-                );
-                analysis.clone()
+        let path = stage_dir.join(&spec.filename);
+        if path.exists() && std::fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
+            produced.push(spec.filename.clone());
+            info!(stage = %stage.name(), artifact = %spec.filename, "Artifact written by agent");
+        } else if !response.is_empty() && !fallback_used {
+            // Fallback: agent didn't write the file — use response text
+            let content = simple_clean(&response);
+            if let Err(e) = std::fs::write(&path, &content) {
+                return StageResult::failure(stage, format!("write {}: {e}", spec.filename));
             }
-        };
-
-        // Final cleaning pass — applies format-appropriate cleaning before writing to disk
-        let content = clean_artifact_output(&raw_content, spec);
-
-        if let Err(e) = std::fs::write(stage_dir.join(&spec.filename), &content) {
-            return StageResult::failure(stage, format!("write {}: {e}", spec.filename));
+            produced.push(spec.filename.clone());
+            fallback_used = true;
+            tracing::warn!(
+                stage = %stage.name(),
+                artifact = %spec.filename,
+                "Agent did not write file; used response text fallback"
+            );
+        } else {
+            tracing::warn!(
+                stage = %stage.name(),
+                artifact = %spec.filename,
+                "Artifact not produced and no fallback available"
+            );
         }
-        produced.push(spec.filename.clone());
     }
 
+    let status = if produced.is_empty() { StageStatus::Failed } else { StageStatus::Done };
+    let error = if produced.is_empty() { Some("No artifacts produced".into()) } else { None };
     StageResult {
         stage,
-        status: StageStatus::Done,
+        status,
         artifacts: produced,
-        error: None,
+        error,
         decision: "proceed".to_owned(),
         elapsed_secs: 0.0,
     }
 }
 
-/// Extract a single artifact from the LLM's free-form analysis.
-///
-/// Strategy: first try to parse the analysis directly. If the format doesn't
-/// match, send a focused extraction prompt.  If that also fails, retry once
-/// with an even more explicit prompt.
-async fn extract_artifact(
-    ctx: &StageContext,
-    analysis: &str,
-    spec: &ArtifactSpec,
-) -> Result<String> {
-    // Attempt 1: can we get the artifact directly from the analysis?
-    if let Some(content) = try_parse_from_analysis(analysis, spec) {
-        return Ok(content);
-    }
-
-    // Attempt 2: focused extraction prompt
-    let extraction_system = "You are a data extraction assistant. Your ONLY job is to reformat \
-        text that is given to you in the prompt. Output ONLY the requested data in the exact \
-        format specified. CRITICAL RULES: Never use tools. Never read files. Never access the \
-        filesystem. Never describe what you would do. The source text is IN THIS PROMPT — \
-        extract from it directly. No commentary, no markdown fences, no explanation.";
-
-    let schema_section = if spec.schema_hint.is_empty() {
-        String::new()
-    } else {
-        format!("\n\nRequired structure (follow this schema exactly):\n{}", spec.schema_hint)
-    };
-
-    let format_instruction = match spec.format {
-        ArtifactFormat::Json => "Output a single valid JSON object or array.",
-        ArtifactFormat::Jsonl => "Output one JSON object per line (JSONL format). No other text.",
-        ArtifactFormat::Yaml => "Output valid YAML. No markdown fences.",
-        ArtifactFormat::Markdown => "Output clean markdown. No meta-commentary like 'Let me...' or 'Here is...'.",
-    };
-
-    let extraction_prompt = format!(
-        "From the following analysis, extract: **{}**\n\n\
-         {}\n{schema_section}\n\n\
-         ---BEGIN ANALYSIS---\n{analysis}\n---END ANALYSIS---\n\n\
-         Now output ONLY the extracted content. Do NOT read files from disk. \
-         Do NOT describe what you would do. Extract directly from the analysis above:",
-        spec.description,
-        format_instruction,
-    );
-
-    let raw_result = llm_generate(ctx, extraction_system, &extraction_prompt, spec.format == ArtifactFormat::Json).await?;
-    let result = strip_llm_noise(&raw_result);
-
-    // Validate
-    if validate_artifact_format(&result, spec) {
-        return Ok(result);
-    }
-
-    // Attempt 3: retry with even more explicit prompt
-    tracing::info!(artifact = %spec.filename, "Extraction attempt 1 didn't validate; retrying");
-    let retry_prompt = format!(
-        "Your previous output was not valid {}. Try again.\n\n\
-         Rules:\n\
-         - Output ONLY raw {} data\n\
-         - No markdown code fences (no ```)\n\
-         - No explanatory text before or after\n\
-         - Do NOT read files from disk or describe actions\n\
-         - Start directly with the data\n\n\
-         The content to extract from:\n{analysis}\n\n\
-         Output:",
-        format_name(spec.format),
-        format_name(spec.format),
-    );
-    let raw_result2 = llm_generate(ctx, extraction_system, &retry_prompt, spec.format == ArtifactFormat::Json).await?;
-    let result2 = strip_llm_noise(&raw_result2);
-
-    if validate_artifact_format(&result2, spec) {
-        return Ok(result2);
-    }
-
-    // Last resort: try brace-matching for JSON formats (with meaningful content check)
-    if spec.format == ArtifactFormat::Json {
-        if let Some(json) = extract_json_block(&result) {
-            if is_valid_json(&json) {
-                return Ok(json);
-            }
-        }
-        if let Some(json) = extract_json_block(&result2) {
-            if is_valid_json(&json) {
-                return Ok(json);
-            }
-        }
-    }
-    if spec.format == ArtifactFormat::Jsonl {
-        let lines = collect_json_lines(&result2);
-        if !lines.is_empty() {
-            return Ok(lines.join("\n"));
-        }
-    }
-    if spec.format == ArtifactFormat::Yaml {
-        // Try extracting YAML from code fences or structured lines
-        let extracted = extract_yaml_block(&result2);
-        if is_structured_yaml(&extracted) {
-            return Ok(extracted);
-        }
-        let extracted1 = extract_yaml_block(&result);
-        if is_structured_yaml(&extracted1) {
-            return Ok(extracted1);
-        }
-        // Also try extracting from the original analysis
-        let extracted_analysis = extract_yaml_block(analysis);
-        if is_structured_yaml(&extracted_analysis) {
-            return Ok(extracted_analysis);
-        }
-    }
-
-    // Give up — return the best attempt
-    tracing::warn!(artifact = %spec.filename, "Could not produce valid artifact after retries");
-    Ok(result2)
-}
-
-/// Try to parse the artifact directly from the analysis text.
-fn try_parse_from_analysis(analysis: &str, spec: &ArtifactSpec) -> Option<String> {
-    match spec.format {
-        ArtifactFormat::Json => {
-            if is_valid_json(analysis) {
-                return Some(analysis.to_string());
-            }
-            extract_json_block(analysis)
-        }
-        ArtifactFormat::Jsonl => {
-            let lines = collect_json_lines(analysis);
-            if !lines.is_empty() {
-                Some(lines.join("\n"))
-            } else {
-                None
-            }
-        }
-        ArtifactFormat::Yaml => {
-            // First try: extract from code fences or structured YAML lines
-            let extracted = extract_yaml_block(analysis);
-            if extracted != analysis.trim() && is_structured_yaml(&extracted) {
-                return Some(extracted);
-            }
-            // Only accept raw analysis if it parses as a mapping or sequence (not scalar)
-            if is_structured_yaml(analysis) {
-                Some(analysis.to_string())
-            } else {
-                None
-            }
-        }
-        ArtifactFormat::Markdown => {
-            // Always force Phase 2 focused extraction for markdown.
-            // Phase 1 analysis under ACP contains meta-commentary that's hard
-            // to strip reliably. Phase 2's focused prompt produces cleaner output.
-            None
-        }
-    }
-}
-
-/// Validate that content matches the expected format.
-fn validate_artifact_format(content: &str, spec: &ArtifactSpec) -> bool {
-    match spec.format {
-        ArtifactFormat::Json => is_valid_json(content),
-        ArtifactFormat::Jsonl => !collect_json_lines(content).is_empty(),
-        ArtifactFormat::Yaml => is_structured_yaml(content),
-        ArtifactFormat::Markdown => {
-            let t = content.trim();
-            if t.is_empty() { return false; }
-            // Check first 5 lines and last 3 lines for noise
-            let lines: Vec<&str> = t.lines().collect();
-            let check_lines = lines.iter().take(5).chain(lines.iter().rev().take(3));
-            for line in check_lines {
-                let l = line.trim();
-                if is_acp_chatter(l) { return false; }
-            }
-            let first = lines[0].trim();
-            !first.starts_with("Let me")
-                && !first.starts_with("I'll ")
-                && !first.starts_with("I need")
-                && !first.starts_with("I've ")
-                && !first.starts_with("The `")
-                && !first.starts_with("Both artifacts")
-                && !first.contains("already exists")
-                && !first.contains("file already")
-        }
-    }
-}
-
-/// Strip common LLM preamble and postamble from markdown responses.
-fn strip_llm_preamble(s: &str) -> String {
-    let mut lines: Vec<&str> = s.lines().collect();
-    // Drop leading lines that are LLM meta-commentary or ACP agent chatter
-    while let Some(first) = lines.first() {
-        let t = first.trim();
-        if t.is_empty()
-            || t.starts_with("Let me")
-            || t.starts_with("I'll ")
-            || t.starts_with("I will")
-            || t.starts_with("I need to")
-            || t.starts_with("I have")
-            || t.starts_with("Now let me")
-            || t.starts_with("Now I")
-            || t.starts_with("Now update")
-            || t.starts_with("Sure,")
-            || t.starts_with("Here is")
-            || t.starts_with("Here's")
-            || t.starts_with("Here are")
-            || t.starts_with("OK,")
-            || t.starts_with("Okay,")
-            || t.starts_with("Good.")
-            || t.starts_with("Good,")
-            || t.starts_with("Great.")
-            || t.starts_with("Perfect.")
-            || t.starts_with("Understood.")
-            || t.starts_with("Got it.")
-            || t.starts_with("[plan]")
-            || t.starts_with("- [in_progress]")
-            || t.starts_with("- [pending]")
-            || t.starts_with("- [completed]")
-            || t.starts_with("- [done]")
-            || t.starts_with("Both artifacts")
-            || t.starts_with("The `")
-            || t.starts_with("Stale from")
-            || is_acp_chatter(t)
-        {
-            lines.remove(0);
-        } else {
-            break;
-        }
-    }
-    // Drop trailing ACP summary lines
-    while let Some(last) = lines.last() {
-        let t = last.trim();
-        if t.is_empty()
-            || t.starts_with("Done.")
-            || t.starts_with("Done!")
-            || t.starts_with("Now update")
-            || t.starts_with("Now let me")
-            || t.starts_with("The experiment log")
-            || t.starts_with("Current status")
-            || is_acp_chatter(t)
-        {
-            lines.pop();
-        } else {
-            break;
-        }
-    }
-    lines.join("\n").trim().to_string()
-}
-
-/// Detect ACP agent meta-commentary patterns.
-fn is_acp_chatter(line: &str) -> bool {
-    if line.trim().is_empty() { return false; }
-    let lower = line.to_lowercase();
-    // Existence/filesystem references
-    lower.contains("already exist")
-        || lower.contains("already been created")
-        || lower.contains("on disk")
-        || lower.contains("the pipeline")
-        || lower.contains("file has been")
-        || lower.contains("has been saved")
-        || lower.contains("this has been")
-        // Session/agent meta-commentary
-        || lower.contains("experiment log")
-        || lower.contains("let me read")
-        || lower.contains("let me verify")
-        || lower.contains("let me check")
-        || lower.contains("produced in session")
-        || lower.contains("sessions completed")
-        || lower.contains("based on the analysis above")
-        // Action summaries
-        || lower.starts_with("i've created")
-        || lower.starts_with("i've written")
-        || lower.starts_with("i've updated")
-        || lower.starts_with("i've produced")
-        // ACP tool tracking
-        || lower.starts_with("[tool_use]")
-        || lower.starts_with("[tool_result]")
-        // Import lines (Python code in non-code artifacts)
-        || (lower.starts_with("import ") && lower.contains("json"))
-        // ACP agent self-summary: "- **`filename`** — description"
-        || (line.starts_with("- **`") && line.contains("** —"))
-        // ACP quoting of prior context
-        || line.starts_with("> ")
-        // Stale from prior project
-        || lower.starts_with("stale from")
-        // Current state summaries
-        || lower.starts_with("**current state")
-        || lower.starts_with("current status")
-}
-
-fn format_name(f: ArtifactFormat) -> &'static str {
-    match f {
-        ArtifactFormat::Json => "JSON",
-        ArtifactFormat::Jsonl => "JSONL",
-        ArtifactFormat::Yaml => "YAML",
-        ArtifactFormat::Markdown => "Markdown",
-    }
-}
-
-/// Final cleaning pass applied to all artifact content before writing to disk.
-/// Applies format-appropriate cleaning to ensure zero ACP/LLM noise in output.
-fn clean_artifact_output(content: &str, spec: &ArtifactSpec) -> String {
-    // Step 1: strip LLM noise (thinking blocks, [plan] blocks, etc.)
-    let cleaned = strip_llm_noise(content);
-
-    // Step 2: format-specific cleaning
-    match spec.format {
-        ArtifactFormat::Json => {
-            // Try to extract clean JSON; fallback to cleaned text
-            if is_valid_json(&cleaned) {
-                return cleaned;
-            }
-            if let Some(json) = extract_json_block(&cleaned) {
-                if is_valid_json(&json) {
-                    return json;
-                }
-            }
-            cleaned
-        }
-        ArtifactFormat::Jsonl => {
-            let lines = collect_json_lines(&cleaned);
-            if !lines.is_empty() {
-                return lines.join("\n");
-            }
-            cleaned
-        }
-        ArtifactFormat::Yaml => {
-            if is_structured_yaml(&cleaned) {
-                return cleaned;
-            }
-            let extracted = extract_yaml_block(&cleaned);
-            if is_structured_yaml(&extracted) {
-                return extracted;
-            }
-            cleaned
-        }
-        ArtifactFormat::Markdown => {
-            // Apply preamble stripping for markdown
-            strip_llm_preamble(&cleaned)
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Low-level LLM call
@@ -842,276 +508,28 @@ fn clean_artifact_output(content: &str, spec: &ArtifactSpec) -> String {
 
 /// Call LLM with a system/user prompt pair.
 ///
-/// Returns `Err` if no LLM provider is configured or if the call fails.
-/// Returns `Ok("")` only if the LLM returns an empty response.
+/// Sets the provider's working directory to the stage directory so the agent's
+/// Write tool creates files in the correct location.
 pub async fn llm_generate(
     ctx: &StageContext,
+    stage: Stage,
     system_prompt: &str,
     user_prompt: &str,
-    json_mode: bool,
 ) -> Result<String> {
     let llm = ctx.llm.as_ref()
         .ok_or_else(|| anyhow::anyhow!("No LLM provider configured"))?;
+
+    // Set cwd to stage directory so agent writes files there
+    llm.set_cwd(&ctx.stage_dir(stage)).await;
 
     let messages = vec![
         mol_llm::Message::system(system_prompt),
         mol_llm::Message::user(user_prompt),
     ];
-    let resp = llm.chat(&messages, json_mode).await
+    let resp = llm.chat(&messages, false).await
         .context("LLM chat call failed")?;
 
-    let cleaned = strip_llm_noise(&resp.content);
-    Ok(strip_markdown_fences(&cleaned))
-}
-
-/// Two-pass structured JSON extraction (Friction Fix #8).
-///
-/// **Pass 1** — call LLM with the original prompt; let it respond freely in any
-/// format (narrative, markdown, mixed — all fine).
-///
-/// **Pass 2** — if Pass 1 isn't already valid JSON, send a short, focused
-/// extraction prompt: "from the analysis above, output **only** the JSON".
-/// This works reliably across models because the extraction task is trivial
-/// compared to the original analysis.
-///
-/// Falls back to `extract_json_block()` (brace-matching) if Pass 2 also fails.
-pub async fn llm_generate_json(
-    ctx: &StageContext,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> Result<String> {
-    let raw = llm_generate(ctx, system_prompt, user_prompt, true).await?;
-
-    // Already valid JSON? Great — return immediately.
-    if is_valid_json(&raw) {
-        return Ok(raw);
-    }
-
-    // Try brace-matching extraction first (cheap, no LLM call)
-    if let Some(json) = extract_json_block(&raw) {
-        return Ok(json);
-    }
-
-    // Pass 2: active extraction — ask LLM to convert its own output to JSON
-    tracing::info!("Pass 1 returned narrative; running extraction pass");
-    let extract_prompt = format!(
-        "The following is your previous analysis. Extract the structured data from it \
-         and output ONLY a valid JSON object or array — no commentary, no markdown, no \
-         explanation. If the analysis contains multiple items, output a JSON array.\n\n\
-         ---\n{raw}\n---\n\nJSON output:",
-    );
-    let pass2 = llm_generate(ctx, "You output only raw JSON. No markdown fences, no text.", &extract_prompt, true).await?;
-
-    if is_valid_json(&pass2) {
-        return Ok(pass2);
-    }
-    if let Some(json) = extract_json_block(&pass2) {
-        return Ok(json);
-    }
-
-    tracing::warn!("Both passes failed to produce valid JSON; returning raw text");
-    Ok(raw)
-}
-
-/// Two-pass structured JSONL extraction.
-///
-/// Same strategy as [`llm_generate_json`] but targets one-JSON-object-per-line output.
-pub async fn llm_generate_jsonl(
-    ctx: &StageContext,
-    system_prompt: &str,
-    user_prompt: &str,
-) -> Result<String> {
-    let raw = llm_generate(ctx, system_prompt, user_prompt, false).await?;
-
-    // Try to collect valid JSON lines from raw output
-    let json_lines = collect_json_lines(&raw);
-    if !json_lines.is_empty() {
-        return Ok(json_lines.join("\n"));
-    }
-
-    // Pass 2: active extraction
-    tracing::info!("Pass 1 returned no valid JSONL lines; running extraction pass");
-    let extract_prompt = format!(
-        "The following is your previous analysis of research papers/data. Convert it into \
-         JSONL format: one JSON object per line, no markdown, no explanation. Each object \
-         should have at minimum: \"id\", \"title\", \"relevance_score\" (0-1) fields.\n\n\
-         ---\n{raw}\n---\n\nJSONL output (one JSON object per line):",
-    );
-    let pass2 = llm_generate(ctx, "You output only raw JSONL. One JSON object per line. No markdown, no text.", &extract_prompt, false).await?;
-
-    let json_lines = collect_json_lines(&pass2);
-    if !json_lines.is_empty() {
-        return Ok(json_lines.join("\n"));
-    }
-
-    tracing::warn!("Both passes failed to produce valid JSONL; returning raw text");
-    Ok(raw)
-}
-
-/// Check if a string is valid JSON (object or array).
-fn is_valid_json(s: &str) -> bool {
-    let t = s.trim();
-    if !(t.starts_with('{') || t.starts_with('[')) {
-        return false;
-    }
-    match serde_json::from_str::<serde_json::Value>(t) {
-        Ok(v) => is_meaningful_json(&v),
-        Err(_) => false,
-    }
-}
-
-/// Reject trivial JSON like `[1]`, `[]`, `{}`, or single-element arrays of primitives.
-/// Meaningful JSON must be an object with at least one key, or an array with at least one object.
-fn is_meaningful_json(v: &serde_json::Value) -> bool {
-    match v {
-        serde_json::Value::Object(m) => !m.is_empty(),
-        serde_json::Value::Array(arr) => {
-            !arr.is_empty() && arr.iter().any(|item| matches!(item, serde_json::Value::Object(_) | serde_json::Value::Array(_) | serde_json::Value::String(_)))
-        }
-        _ => false,
-    }
-}
-
-/// Check that YAML parses as a mapping or sequence (not a bare scalar/string).
-fn is_structured_yaml(s: &str) -> bool {
-    let t = s.trim();
-    if t.is_empty() || t.len() < 10 {
-        return false;
-    }
-    match serde_yaml::from_str::<serde_yaml::Value>(t) {
-        Ok(serde_yaml::Value::Mapping(m)) => !m.is_empty(),
-        Ok(serde_yaml::Value::Sequence(s)) => !s.is_empty(),
-        _ => false,
-    }
-}
-
-/// Collect lines that are individually valid JSON objects.
-fn collect_json_lines(s: &str) -> Vec<&str> {
-    s.lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .filter(|l| l.starts_with('{') && serde_json::from_str::<serde_json::Value>(l).is_ok())
-        .collect()
-}
-
-/// Extract the largest JSON object (`{...}`) or array (`[...]`) from text,
-/// handling nested braces.
-fn extract_json_block(text: &str) -> Option<String> {
-    let mut best: Option<String> = None;
-    let mut best_len = 0;
-
-    for (open, close) in &[('{', '}'), ('[', ']')] {
-        let chars: Vec<char> = text.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            if chars[i] == *open {
-                let mut depth = 0;
-                let mut in_string = false;
-                let mut escape = false;
-                let start = i;
-                let mut j = i;
-                while j < chars.len() {
-                    let c = chars[j];
-                    if escape {
-                        escape = false;
-                    } else if c == '\\' && in_string {
-                        escape = true;
-                    } else if c == '"' {
-                        in_string = !in_string;
-                    } else if !in_string {
-                        if c == *open { depth += 1; }
-                        if c == *close { depth -= 1; }
-                        if depth == 0 {
-                            let candidate: String = chars[start..=j].iter().collect();
-                            if serde_json::from_str::<serde_json::Value>(&candidate).is_ok()
-                                && candidate.len() > best_len
-                            {
-                                best_len = candidate.len();
-                                best = Some(candidate);
-                            }
-                            break;
-                        }
-                    }
-                    j += 1;
-                }
-                i = j + 1;
-            } else {
-                i += 1;
-            }
-        }
-    }
-    best
-}
-
-/// Strip LLM noise: thinking traces, ACP session artifacts, etc.
-fn strip_llm_noise(s: &str) -> String {
-    let mut result = s.to_string();
-
-    // Strip ACP session noise (e.g. "Compacting...\n\nCompacting completed.\n\n")
-    for prefix in &["Compacting...", "Warming up...", "Resuming..."] {
-        if let Some(rest) = result.strip_prefix(prefix) {
-            if let Some(pos) = rest.find("\n\n") {
-                result = rest[pos + 2..].to_string();
-            }
-        }
-    }
-
-    // Strip [thinking]...[/thinking] blocks (may span many lines)
-    while let Some(start) = result.find("[thinking]") {
-        if let Some(end) = result.find("[/thinking]") {
-            let after = end + "[/thinking]".len();
-            let rest = result[after..].trim_start_matches('\n');
-            result = format!("{}{}", &result[..start], rest);
-        } else {
-            // Unclosed [thinking] — strip to next double blank line
-            if let Some(end) = result[start..].find("\n\n") {
-                let after = start + end + 2;
-                result = format!("{}{}", &result[..start], &result[after..]);
-            } else {
-                break;
-            }
-        }
-    }
-
-    // Also strip <thinking>...</thinking> XML-style blocks (Claude sometimes uses these)
-    while let Some(start) = result.find("<thinking>") {
-        if let Some(end) = result.find("</thinking>") {
-            let after = end + "</thinking>".len();
-            let rest = result[after..].trim_start_matches('\n');
-            result = format!("{}{}", &result[..start], rest);
-        } else {
-            break;
-        }
-    }
-
-    // Strip ACP agent [plan] blocks (Claude Code task tracking artifacts)
-    // These look like: [plan]\n  - [in_progress] ...\n  - [pending] ...\n\n
-    while let Some(start) = result.find("[plan]") {
-        // Find the end of the plan block: next blank line or non-indented non-plan line
-        let after_tag = start + "[plan]".len();
-        let remaining = &result[after_tag..];
-        let mut end_offset = remaining.len();
-        for (i, line) in remaining.lines().enumerate() {
-            if i == 0 { continue; } // skip the [plan] line itself
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                // Found blank line — plan block ends here
-                let line_start: usize = remaining.lines().take(i).map(|l| l.len() + 1).sum();
-                end_offset = line_start;
-                break;
-            }
-            if !trimmed.starts_with("- [") && !trimmed.starts_with("-[") {
-                // Non-plan line — plan block ended at previous line
-                let line_start: usize = remaining.lines().take(i).map(|l| l.len() + 1).sum();
-                end_offset = line_start;
-                break;
-            }
-        }
-        let rest = result[after_tag..][end_offset..].trim_start_matches('\n');
-        result = format!("{}{}", &result[..start], rest);
-    }
-
-    result
+    Ok(resp.content)
 }
 
 /// Strip YAML frontmatter (delimited by `---`) from a markdown document.
@@ -1231,6 +649,24 @@ pub fn read_prior_artifact_pub(run_dir: &Path, filename: &str) -> Option<String>
 }
 
 fn read_prior_artifact(run_dir: &Path, filename: &str) -> Option<String> {
+    // First try the exact filename
+    if let Some(content) = read_prior_artifact_exact(run_dir, filename) {
+        return Some(content);
+    }
+    // Backward compat: if looking for .md, try .json and .yaml
+    if filename.ends_with(".md") {
+        let stem = filename.trim_end_matches(".md");
+        for ext in &[".json", ".yaml", ".yml", ".jsonl"] {
+            let old_name = format!("{stem}{ext}");
+            if let Some(content) = read_prior_artifact_exact(run_dir, &old_name) {
+                return Some(content);
+            }
+        }
+    }
+    None
+}
+
+fn read_prior_artifact_exact(run_dir: &Path, filename: &str) -> Option<String> {
     let mut stage_dirs: Vec<_> = std::fs::read_dir(run_dir)
         .ok()?
         .filter_map(|e| e.ok())
@@ -1304,188 +740,6 @@ fn find_prior_file(run_dir: &Path, filename: &str) -> Option<PathBuf> {
             return Some(candidate);
         }
     }
-    None
-}
-
-/// Extract a YAML block from `text` which may contain LLM/ACP noise.
-///
-/// Tries in order: ` ```yaml ` fence → ` ```yml ` fence → bare ` ``` ` fence
-/// → raw YAML detection (lines starting with `word:`).
-fn extract_yaml_block(text: &str) -> String {
-    // Pre-strip ACP noise: [thinking]...[/thinking] and [plan]...\n\n blocks
-    // Mirror of Python's _extract_yaml_block pre-processing step.
-    let cleaned: String = {
-        // Strip [thinking] blocks up to the next ``` fence, uppercase line, or end
-        let mut s = String::with_capacity(text.len());
-        let mut rest = text;
-        while let Some(start) = rest.find("[thinking]") {
-            s.push_str(&rest[..start]);
-            let after = &rest[start..];
-            // Find end: next ```  or next uppercase-leading line or end
-            let end_pos = after[10..]
-                .find("```")
-                .map(|p| 10 + p)
-                .or_else(|| {
-                    after[10..]
-                        .lines()
-                        .skip(1)
-                        .enumerate()
-                        .find(|(_, l)| l.starts_with(|c: char| c.is_uppercase()))
-                        .map(|(i, _)| {
-                            after[10..].lines().take(i + 1).map(|l| l.len() + 1).sum::<usize>() + 10
-                        })
-                })
-                .unwrap_or(after.len());
-            rest = &rest[start + end_pos..];
-        }
-        s.push_str(rest);
-        // Strip [plan]...\n\n blocks
-        let mut out = String::with_capacity(s.len());
-        let mut rem = s.as_str();
-        while let Some(start) = rem.find("[plan]") {
-            out.push_str(&rem[..start]);
-            let after = &rem[start..];
-            let end_pos = after.find("\n\n").map(|p| p + 2).unwrap_or(after.len());
-            rem = &rem[start + end_pos..];
-        }
-        out.push_str(rem);
-        out
-    };
-
-    // Helper: extract from a single fence-delimited string
-    fn extract_from(src: &str, fence: &str) -> Option<String> {
-        let skip = fence.len();
-        src.find(fence).and_then(|start| {
-            let after = &src[start + skip..];
-            after.find("```").map(|end| after[..end].trim().to_string())
-        })
-    }
-    fn extract_bare(src: &str) -> Option<String> {
-        src.find("```").and_then(|start| {
-            let after = &src[start + 3..];
-            after.find("```").map(|end| {
-                let block = after[..end].trim();
-                if !block.is_empty() { Some(block.to_string()) } else { None }
-            }).flatten()
-        })
-    }
-
-    // Try markdown fences on cleaned text first (mirrors Python)
-    if let Some(v) = extract_from(&cleaned, "```yaml") { return v; }
-    if let Some(v) = extract_from(&cleaned, "```yml")  { return v; }
-    if let Some(v) = extract_bare(&cleaned)            { return v; }
-
-    // Fall back to original text in case cleaning removed too much (mirrors Python)
-    if let Some(v) = extract_from(text, "```yaml") { return v; }
-    if let Some(v) = extract_from(text, "```yml")  { return v; }
-    if let Some(v) = extract_bare(text)            { return v; }
-
-    // Last resort: collect lines that look like raw YAML from cleaned text
-    let mut yaml_lines: Vec<&str> = Vec::new();
-    let mut in_yaml = false;
-    for line in cleaned.lines() {
-        let t = line.trim();
-        if !in_yaml {
-            if t.split_once(':').map(|(k, _)| k.chars().all(|c| c.is_ascii_lowercase() || c == '_')).unwrap_or(false) {
-                in_yaml = true;
-            }
-        }
-        if in_yaml {
-            if !t.is_empty() && !t.starts_with('#') {
-                yaml_lines.push(line);
-            } else if t.is_empty() && !yaml_lines.is_empty() {
-                yaml_lines.push(line);
-            }
-        }
-    }
-    if !yaml_lines.is_empty() {
-        return yaml_lines.join("\n").trim().to_string();
-    }
-
-    text.trim().to_string()
-}
-
-/// Multi-strategy JSON parsing.
-///
-/// 1. Direct parse.
-/// 2. Extract from ` ```json ` fences.
-/// 3. Balanced-brace matching (largest `{}` block first).
-/// 4. Balanced-bracket matching for arrays.
-fn safe_json_loads(text: &str) -> Option<serde_json::Value> {
-    // 1. Direct parse
-    if let Ok(v) = serde_json::from_str(text.trim()) {
-        return Some(v);
-    }
-
-    // 2. Extract from ```json fence
-    if let Some(start) = text.find("```json") {
-        let after = &text[start + 7..];
-        if let Some(end) = after.find("```") {
-            let block = after[..end].trim();
-            if let Ok(v) = serde_json::from_str(block) {
-                return Some(v);
-            }
-        }
-    }
-
-    // 3. Balanced brace matching – collect all {…} spans, try largest first
-    let mut brace_spans: Vec<(usize, usize)> = Vec::new();
-    let bytes = text.as_bytes();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    for (i, &b) in bytes.iter().enumerate() {
-        match b {
-            b'{' => {
-                if depth == 0 {
-                    start = i;
-                }
-                depth += 1;
-            }
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    brace_spans.push((start, i + 1));
-                }
-            }
-            _ => {}
-        }
-    }
-    // Sort by span length descending
-    brace_spans.sort_by_key(|(s, e)| std::cmp::Reverse(e - s));
-    for (s, e) in brace_spans {
-        if let Ok(v) = serde_json::from_str(&text[s..e]) {
-            return Some(v);
-        }
-    }
-
-    // 4. Balanced bracket matching for arrays
-    let mut bracket_spans: Vec<(usize, usize)> = Vec::new();
-    let mut depth = 0i32;
-    let mut start = 0usize;
-    for (i, &b) in bytes.iter().enumerate() {
-        match b {
-            b'[' => {
-                if depth == 0 {
-                    start = i;
-                }
-                depth += 1;
-            }
-            b']' => {
-                depth -= 1;
-                if depth == 0 {
-                    bracket_spans.push((start, i + 1));
-                }
-            }
-            _ => {}
-        }
-    }
-    bracket_spans.sort_by_key(|(s, e)| std::cmp::Reverse(e - s));
-    for (s, e) in bracket_spans {
-        if let Ok(v) = serde_json::from_str(&text[s..e]) {
-            return Some(v);
-        }
-    }
-
     None
 }
 
@@ -2322,64 +1576,6 @@ mod tests {
     // Helper function tests
     // -----------------------------------------------------------------
 
-    #[test]
-    fn safe_json_loads_direct() {
-        let val = safe_json_loads(r#"{"key": "value"}"#);
-        assert!(val.is_some());
-        assert_eq!(val.unwrap()["key"], "value");
-    }
-
-    #[test]
-    fn safe_json_loads_from_fence() {
-        let input = "Here:\n```json\n{\"key\": \"value\"}\n```\nDone.";
-        let val = safe_json_loads(input);
-        assert!(val.is_some());
-    }
-
-    #[test]
-    fn safe_json_loads_brace_matching() {
-        let input = "noise {\"a\":1} more noise {\"b\":2, \"c\":3} end";
-        let val = safe_json_loads(input);
-        assert!(val.is_some());
-        // Should find the largest dict
-        assert!(val.unwrap().get("b").is_some());
-    }
-
-    #[test]
-    fn extract_yaml_block_from_fence() {
-        let input = "text\n```yaml\nkey: value\nlist:\n  - a\n  - b\n```\nmore";
-        let yaml = extract_yaml_block(input);
-        assert!(yaml.contains("key: value"));
-    }
-
-    #[test]
-    fn extract_yaml_block_strips_thinking_before_fence() {
-        let input = "[thinking]\nI am reasoning about things here.\n```yaml\ntopic: deep learning\n```";
-        let yaml = extract_yaml_block(input);
-        assert!(yaml.contains("topic: deep learning"), "got: {yaml}");
-        assert!(!yaml.contains("[thinking]"));
-    }
-
-    #[test]
-    fn extract_yaml_block_strips_plan_before_fence() {
-        let input = "[plan]\nStep 1: do something\nStep 2: do another thing\n\n```yaml\ngoal: test\n```";
-        let yaml = extract_yaml_block(input);
-        assert!(yaml.contains("goal: test"), "got: {yaml}");
-        assert!(!yaml.contains("[plan]"));
-    }
-
-    #[test]
-    fn extract_yaml_block_strips_both_thinking_and_plan() {
-        // [thinking] block followed by a [plan] block, then YAML
-        let input = "[thinking]\nLet me reason here.\n```yaml\n[plan]\nStep 1\n\n```yaml\nresult: ok\n```";
-        // After stripping [thinking] up to the first ```, the rest starts at "```yaml\n[plan]..."
-        // After stripping [plan] up to "\n\n", remainder is "```yaml\nresult: ok\n```"
-        // The function should fall back to original text when cleaned text yields nothing useful.
-        // Just verify the function doesn't panic and returns a string.
-        let yaml = extract_yaml_block(input);
-        // The raw text contains "```yaml\nresult: ok" — fallback path should find it
-        let _ = yaml; // don't assert contents; just ensure no panic
-    }
 
     #[test]
     fn detect_domain_ml() {
@@ -2479,31 +1675,6 @@ mod tests {
         let result = strip_markdown_fences(input);
         assert!(result.contains("{\"id\":1}"));
         assert!(result.contains("{\"id\":3}"));
-    }
-
-    #[test]
-    fn extract_json_block_from_narrative() {
-        let input = r#"Here are the results:
-Some text about findings.
-[{"id":1,"name":"a"},{"id":2,"name":"b"}]
-And more narrative."#;
-        let result = extract_json_block(input).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert!(parsed.is_array());
-        assert_eq!(parsed.as_array().unwrap().len(), 2);
-    }
-
-    #[test]
-    fn extract_json_block_object() {
-        let input = r#"Okay, {"key": "value", "nested": {"a": 1}} done."#;
-        let result = extract_json_block(input).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(parsed["key"], "value");
-    }
-
-    #[test]
-    fn extract_json_block_none_when_no_json() {
-        assert!(extract_json_block("no json here at all").is_none());
     }
 
     // -----------------------------------------------------------------
