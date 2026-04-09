@@ -200,7 +200,23 @@ impl ACPClient {
             .clone();
         let cwd = self.abs_cwd();
 
-        // Try `sessions ensure` first, fall back to `sessions new`.
+        // Always create a fresh session to avoid context leakage between runs
+        // (Friction Fix #3: stale session state produces garbage artifacts).
+        // First try closing any existing session with the same name.
+        let _ = Command::new(&acpx)
+            .args([
+                "--ttl",
+                "0",
+                "--cwd",
+                &cwd,
+                &self.config.agent,
+                "sessions",
+                "close",
+                &self.config.session_name,
+            ])
+            .output()
+            .await;
+
         let result = Command::new(&acpx)
             .args([
                 "--ttl",
@@ -209,7 +225,7 @@ impl ACPClient {
                 &cwd,
                 &self.config.agent,
                 "sessions",
-                "ensure",
+                "new",
                 "--name",
                 &self.config.session_name,
             ])
@@ -217,6 +233,7 @@ impl ACPClient {
             .await?;
 
         if !result.status.success() {
+            // Fall back to `sessions ensure` if `new` fails (e.g. agent doesn't support it)
             let result2 = Command::new(&acpx)
                 .args([
                     "--ttl",
@@ -225,7 +242,7 @@ impl ACPClient {
                     &cwd,
                     &self.config.agent,
                     "sessions",
-                    "new",
+                    "ensure",
                     "--name",
                     &self.config.session_name,
                 ])
@@ -242,7 +259,7 @@ impl ACPClient {
         info!(
             session = %self.config.session_name,
             agent = %self.config.agent,
-            "ACP session ready"
+            "ACP session ready (fresh)"
         );
         Ok(())
     }

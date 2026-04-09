@@ -317,25 +317,44 @@ pub async fn llm_generate(
 /// Strip LLM noise: thinking traces, ACP session artifacts, etc.
 fn strip_llm_noise(s: &str) -> String {
     let mut result = s.to_string();
+
     // Strip ACP session noise (e.g. "Compacting...\n\nCompacting completed.\n\n")
     for prefix in &["Compacting...", "Warming up...", "Resuming..."] {
         if let Some(rest) = result.strip_prefix(prefix) {
-            // Find where the noise ends (usually a double newline after a status line)
             if let Some(pos) = rest.find("\n\n") {
                 result = rest[pos + 2..].to_string();
             }
         }
     }
-    // Strip [thinking] blocks at the start
-    let trimmed = result.trim_start();
-    if trimmed.starts_with("[thinking]") {
-        // Find end of thinking block: next [/thinking] or blank-line-then-content
-        if let Some(end) = trimmed.find("\n\n") {
-            let after = &trimmed[end + 2..];
-            // If there's still a [thinking] at start, strip recursively
-            result = after.to_string();
+
+    // Strip [thinking]...[/thinking] blocks (may span many lines)
+    while let Some(start) = result.find("[thinking]") {
+        if let Some(end) = result.find("[/thinking]") {
+            let after = end + "[/thinking]".len();
+            let rest = result[after..].trim_start_matches('\n');
+            result = format!("{}{}", &result[..start], rest);
+        } else {
+            // Unclosed [thinking] — strip to next double blank line
+            if let Some(end) = result[start..].find("\n\n") {
+                let after = start + end + 2;
+                result = format!("{}{}", &result[..start], &result[after..]);
+            } else {
+                break;
+            }
         }
     }
+
+    // Also strip <thinking>...</thinking> XML-style blocks (Claude sometimes uses these)
+    while let Some(start) = result.find("<thinking>") {
+        if let Some(end) = result.find("</thinking>") {
+            let after = end + "</thinking>".len();
+            let rest = result[after..].trim_start_matches('\n');
+            result = format!("{}{}", &result[..start], rest);
+        } else {
+            break;
+        }
+    }
+
     result
 }
 

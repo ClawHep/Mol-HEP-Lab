@@ -108,13 +108,33 @@ impl LlmProvider for CliProvider {
 /// Create the best available LLM provider based on config.
 ///
 /// Priority:
-/// 1. API key configured → [`LLMClient`] (OpenAI/Anthropic)
-/// 2. `provider = "acp"` or CLI tool on PATH → [`CliProvider`]
-/// 3. Neither → returns `None` (stages will use fallback templates)
+/// 1. Explicit `provider` setting in config (respected unconditionally)
+///    - `"acp"` → CLI provider via acpx
+///    - `"api"` → API provider (requires key)
+///    - `"none"` → no provider
+/// 2. Auto-detect: API key in env → API; CLI tool on PATH → CLI
+/// 3. Neither → returns `None`
 pub fn create_provider(config: &MolConfig) -> Option<Arc<dyn LlmProvider>> {
     let llm = &config.llm;
 
-    // 1. Try API mode — resolve key from env var or direct config
+    // Respect explicit provider choice first (Friction Fix #1: user config > auto-detect)
+    match llm.provider.as_str() {
+        "acp" => {
+            return create_cli_provider(llm);
+        }
+        "none" => {
+            info!("LLM provider: none (disabled by config)");
+            return None;
+        }
+        "api" => {
+            // Fall through to API key resolution below
+        }
+        _ => {
+            // Empty or unrecognized → auto-detect (legacy behavior)
+        }
+    }
+
+    // Try API mode — resolve key from env var or direct config
     let is_placeholder = |k: &str| k.is_empty() || k.starts_with("__") || k == "sk-placeholder";
     let api_key = if !is_placeholder(&llm.api_key) {
         Some(llm.api_key.clone())
@@ -155,8 +175,17 @@ pub fn create_provider(config: &MolConfig) -> Option<Arc<dyn LlmProvider>> {
         }
     }
 
-    // 2. Try CLI mode (ACP) — explicit config or auto-detect
-    let cli_agent = if llm.provider == "acp" {
+    // Auto-detect CLI tool on PATH
+    create_cli_provider(llm)
+        .or_else(|| {
+            info!("LLM provider: none (no API key or CLI tool found)");
+            None
+        })
+}
+
+/// Try to create a CLI (ACP) provider from config or auto-detected CLI tools.
+fn create_cli_provider(llm: &mol_config::LlmConfig) -> Option<Arc<dyn LlmProvider>> {
+    let agent = if !llm.acp.agent.is_empty() {
         Some(llm.acp.agent.clone())
     } else if which::which("claude").is_ok() {
         Some("claude".to_string())
@@ -168,7 +197,7 @@ pub fn create_provider(config: &MolConfig) -> Option<Arc<dyn LlmProvider>> {
         None
     };
 
-    if let Some(agent) = cli_agent {
+    agent.map(|agent| {
         let acp_config = ACPConfig {
             agent: agent.clone(),
             cwd: PathBuf::from(&llm.acp.cwd),
@@ -179,10 +208,6 @@ pub fn create_provider(config: &MolConfig) -> Option<Arc<dyn LlmProvider>> {
         };
         let client = ACPClient::new(acp_config);
         info!(provider = "cli", agent = %agent, "LLM provider: CLI");
-        return Some(Arc::new(CliProvider::new(client)));
-    }
-
-    // 3. No provider available
-    info!("LLM provider: none (stages will use fallback templates)");
-    None
+        Arc::new(CliProvider::new(client)) as Arc<dyn LlmProvider>
+    })
 }
