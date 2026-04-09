@@ -60,7 +60,7 @@ pub async fn execute_paper_draft(stage: Stage, ctx: &StageContext) -> StageResul
 ///
 /// Multi-agent peer review: physics-reviewer (primary), then critical + constructive reviewers.
 pub async fn execute_peer_review(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_multi_agentic};
+    use crate::executor::{ArtifactSpec, execute_multi_agentic_with_rework};
 
     let primary_specs = vec![
         ArtifactSpec {
@@ -87,7 +87,7 @@ pub async fn execute_peer_review(stage: Stage, ctx: &StageContext) -> StageResul
         ]),
     ];
 
-    execute_multi_agentic(stage, ctx, &primary_specs, &reviewer_specs).await
+    execute_multi_agentic_with_rework(stage, ctx, &primary_specs, &reviewer_specs, 2).await
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ pub async fn execute_paper_revision(stage: Stage, ctx: &StageContext) -> StageRe
 ///
 /// Returns BlockedApproval if not auto-approved.
 pub async fn execute_quality_gate(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_multi_agentic};
+    use crate::executor::{ArtifactSpec, execute_multi_agentic_with_rework};
 
     let primary_specs = vec![
         ArtifactSpec {
@@ -153,7 +153,7 @@ pub async fn execute_quality_gate(stage: Stage, ctx: &StageContext) -> StageResu
         ]),
     ];
 
-    let mut result = execute_multi_agentic(stage, ctx, &primary_specs, &reviewer_specs).await;
+    let mut result = execute_multi_agentic_with_rework(stage, ctx, &primary_specs, &reviewer_specs, 2).await;
     if result.status != StageStatus::Done {
         return result;
     }

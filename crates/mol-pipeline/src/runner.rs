@@ -403,6 +403,9 @@ pub async fn execute_pipeline_with_llm(
             warn!("heartbeat write failed: {}", e);
         }
 
+        // Write stage execution log for traceability.
+        write_stage_log(run_dir, stage, &result, elapsed);
+
         // Gate handling.
         if result.status == StageStatus::Done
             && crate::stages::gate_required(stage, None)
@@ -498,6 +501,78 @@ pub async fn execute_pipeline_with_llm(
     write_pipeline_summary(run_dir, &summary).await;
 
     Ok(summary)
+}
+
+// ---------------------------------------------------------------------------
+// Stage execution log
+// ---------------------------------------------------------------------------
+
+/// Write a `stage_log.md` file into the stage directory for traceability.
+///
+/// Records timing, status, decision, artifacts produced (with sizes), and
+/// any error message.
+fn write_stage_log(run_dir: &Path, stage: Stage, result: &StageResult, elapsed: f64) {
+    let stage_num = stage.as_i32();
+    let stage_dir = run_dir.join(format!("stage-{stage_num:02}"));
+    let _ = std::fs::create_dir_all(&stage_dir);
+
+    let timestamp = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let status_str = match result.status {
+        StageStatus::Done => "✅ Done",
+        StageStatus::Failed => "❌ Failed",
+        StageStatus::BlockedApproval => "⏳ Blocked (awaiting approval)",
+        _ => "⚠️ Other",
+    };
+
+    let mut artifact_lines = String::new();
+    for name in &result.artifacts {
+        let path = stage_dir.join(name);
+        let size = std::fs::metadata(&path)
+            .map(|m| {
+                let bytes = m.len();
+                if bytes < 1024 {
+                    format!("{bytes} B")
+                } else if bytes < 1024 * 1024 {
+                    format!("{:.1} KB", bytes as f64 / 1024.0)
+                } else {
+                    format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+                }
+            })
+            .unwrap_or_else(|_| "?".into());
+        artifact_lines.push_str(&format!("- `{name}` ({size})\n"));
+    }
+    if artifact_lines.is_empty() {
+        artifact_lines = "- _(none)_\n".into();
+    }
+
+    let error_section = match &result.error {
+        Some(e) => format!("\n## Error\n\n```\n{e}\n```\n"),
+        None => String::new(),
+    };
+
+    let stage_name = stage.name();
+    let display = stage.display_name();
+    let phase = stage.phase_label();
+    let decision = &result.decision;
+
+    let content = format!(
+        "# Stage Log: {stage_name} ({display})\n\n\
+         | Field | Value |\n\
+         |-------|-------|\n\
+         | Stage | {stage_num:02} — {display} |\n\
+         | Phase | {phase} |\n\
+         | Status | {status_str} |\n\
+         | Decision | {decision} |\n\
+         | Elapsed | {elapsed:.1}s |\n\
+         | Timestamp | {timestamp} |\n\n\
+         ## Artifacts\n\n\
+         {artifact_lines}\
+         {error_section}",
+    );
+
+    if let Err(e) = std::fs::write(stage_dir.join("stage_log.md"), &content) {
+        warn!("Failed to write stage_log.md for {}: {e}", stage.name());
+    }
 }
 
 // ---------------------------------------------------------------------------

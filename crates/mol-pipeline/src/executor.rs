@@ -460,7 +460,24 @@ fn build_output_spec(specs: &[ArtifactSpec]) -> String {
 /// Unlike the deleted `strip_llm_preamble`, this is intentionally simple:
 /// just drop leading lines that are clearly meta-commentary.
 fn simple_clean(text: &str) -> String {
-    let mut lines: Vec<&str> = text.lines().collect();
+    // Strip [thinking]...[/thinking] blocks (LLM thought leakage)
+    let mut cleaned = text.to_owned();
+    while let Some(start) = cleaned.find("[thinking]") {
+        if let Some(end) = cleaned[start..].find("[/thinking]") {
+            cleaned.replace_range(start..start + end + "[/thinking]".len(), "");
+        } else {
+            // Unclosed thinking block — strip from [thinking] to next blank line or end
+            if let Some(blank) = cleaned[start..].find("\n\n") {
+                cleaned.replace_range(start..start + blank, "");
+            } else {
+                cleaned.truncate(start);
+            }
+        }
+    }
+    // Also strip lines that start with [thinking] (single-line variant)
+    let mut lines: Vec<&str> = cleaned.lines()
+        .filter(|l| !l.trim().starts_with("[thinking]"))
+        .collect();
     // Drop leading preamble lines
     while let Some(first) = lines.first() {
         let t = first.trim();
@@ -734,6 +751,144 @@ pub async fn execute_multi_agentic(
                     "Reviewer LLM call failed: {e} — skipping"
                 );
             }
+        }
+    }
+
+    result
+}
+
+/// Phrases in review artifacts that indicate critical issues requiring rework.
+const REWORK_TRIGGERS: &[&str] = &[
+    "critical",
+    "fail",
+    "must fix",
+    "must be fixed",
+    "blocking",
+    "severity: a",
+    "severity a",
+    "not ready",
+    "reject",
+];
+
+/// Check if any reviewer artifact contains critical findings that warrant rework.
+///
+/// Reads all review files in `stage_dir`, scans for trigger phrases.
+/// Returns a summary of findings if rework is needed, or `None` if clean.
+pub fn check_review_findings(stage_dir: &std::path::Path, review_files: &[&str]) -> Option<String> {
+    let mut findings = Vec::new();
+
+    for filename in review_files {
+        let path = stage_dir.join(filename);
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let lower = content.to_lowercase();
+        let triggered: Vec<&&str> = REWORK_TRIGGERS.iter()
+            .filter(|t| lower.contains(**t))
+            .collect();
+        if !triggered.is_empty() {
+            findings.push(format!(
+                "**{filename}**: found {} ({})",
+                triggered.len(),
+                triggered.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", ")
+            ));
+        }
+    }
+
+    if findings.is_empty() {
+        None
+    } else {
+        Some(findings.join("\n"))
+    }
+}
+
+/// Multi-agent execution with review-driven rework loop.
+///
+/// Runs `execute_multi_agentic()`, then checks reviewer artifacts for critical
+/// findings. If found, feeds findings back to the primary agent to fix, then
+/// re-runs the full review cycle. Bounded by `max_rework` iterations.
+pub async fn execute_multi_agentic_with_rework(
+    stage: Stage,
+    ctx: &StageContext,
+    primary_specs: &[ArtifactSpec],
+    reviewers: &[(&str, Vec<ArtifactSpec>)],
+    max_rework: u32,
+) -> StageResult {
+    let stage_dir = ctx.stage_dir(stage);
+
+    // Collect reviewer artifact filenames for checking
+    let review_files: Vec<&str> = reviewers.iter()
+        .flat_map(|(_, specs)| specs.iter().map(|s| s.filename.as_str()))
+        .collect();
+
+    let mut result = execute_multi_agentic(stage, ctx, primary_specs, reviewers).await;
+    if result.status != StageStatus::Done {
+        return result;
+    }
+
+    for rework_round in 1..=max_rework {
+        // Check if reviews found critical issues
+        let findings = match check_review_findings(&stage_dir, &review_files) {
+            Some(f) => f,
+            None => {
+                info!(stage = %stage.name(), "Review clean — no rework needed");
+                break;
+            }
+        };
+
+        info!(
+            stage = %stage.name(),
+            rework_round,
+            max_rework,
+            "Review found critical issues — triggering rework"
+        );
+
+        // Reset session before rework call
+        if let Some(provider) = ctx.llm.as_ref() {
+            let _ = provider.reset_session().await;
+        }
+
+        // Build rework prompt: primary agent reads its own output + review findings
+        let mut rework_context = String::new();
+        for spec in primary_specs {
+            let path = stage_dir.join(&spec.filename);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                rework_context.push_str(&format!("## Your previous output: {}\n\n{content}\n\n", spec.filename));
+            }
+        }
+        for filename in &review_files {
+            let path = stage_dir.join(filename);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                rework_context.push_str(&format!("## Review feedback: {filename}\n\n{content}\n\n"));
+            }
+        }
+
+        let rework_prompt = format!(
+            "The reviewers found critical issues with your previous output. \
+             Please fix all CRITICAL and MAJOR issues identified below, then \
+             rewrite your artifacts.\n\n\
+             ## Review Findings Summary\n\n{findings}\n\n\
+             ## Full Context\n\n{rework_context}\n\n\
+             Fix the issues and rewrite the artifact files. \
+             Address every CRITICAL issue. For MAJOR issues, fix what you can."
+        );
+
+        // Call primary agent with rework prompt
+        match llm_generate(ctx, stage, "", &rework_prompt).await {
+            Ok(_) => {
+                info!(stage = %stage.name(), rework_round, "Rework complete, re-running review");
+            }
+            Err(e) => {
+                tracing::warn!(stage = %stage.name(), rework_round, "Rework LLM call failed: {e}");
+                break;
+            }
+        }
+
+        // Re-run reviews on the reworked artifacts
+        result = execute_multi_agentic(stage, ctx, primary_specs, reviewers).await;
+        if result.status != StageStatus::Done {
+            break;
         }
     }
 

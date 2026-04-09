@@ -198,4 +198,146 @@ works correctly (sources.json, queries.json both valid), but YAML extraction fai
 **Expected**: `search_plan.yaml` should contain a valid YAML search plan.
 **Fix**: TODO
 
-**Status**: INVESTIGATING
+**Status**: INVESTIGATING (less critical after agent-direct-write migration)
+
+---
+
+## Friction Point #11: `[thinking]` blocks leak into fallback artifacts
+
+**Severity**: MEDIUM
+**File**: `crates/mol-pipeline/src/executor.rs` (`simple_clean()`)
+**Problem**: When agent doesn't write a file via Write tool, `execute_agentic()` falls
+back to writing the raw LLM response as the artifact. This response includes `[thinking]`
+blocks (Claude's internal reasoning), polluting the artifact with non-content text.
+Observed in `stage-12/sanity_report.md` during E2E run.
+**Expected**: Artifacts should contain only the actual content.
+**Fix**: Added `[thinking]...[/thinking]` block stripping to `simple_clean()`.
+
+**Status**: FIXED
+
+---
+
+## Friction Point #12: No `stage_log.md` for traceability
+
+**Severity**: MEDIUM
+**File**: `crates/mol-pipeline/src/runner.rs`
+**Problem**: Completed stages have no execution log. Only heartbeat.json and
+checkpoint.json are updated. When debugging pipeline issues, there's no per-stage
+record of timing, artifacts, status, and decision.
+**Expected**: Each stage should produce a `stage_log.md` documenting what happened.
+**Fix**: Added `write_stage_log()` in runner.rs, called after heartbeat write.
+Produces markdown table with stage name, phase, status, decision, elapsed time,
+and artifact list with file sizes.
+
+**Status**: FIXED
+
+---
+
+## Friction Point #13: SANITY_CHECK doesn't run code or iterate
+
+**Severity**: HIGH
+**File**: `crates/mol-pipeline/src/stages_impl/phase3.rs`
+**Problem**: `execute_sanity_check()` only does multi-agent LLM review (cross-checker
++ plot-validator). It never actually runs the experiment code, doesn't use the
+`runtimes/sanity_check` workspace/fix-loop infrastructure, and can't fix issues.
+The sanity_check runtime has all the tools (prepare_workspace, check_success,
+copy_fixes_back) but they were never wired into the stage executor.
+**Expected**: Sanity check should: prepare workspace → run code → detect errors →
+fix iteratively → copy fixes back → THEN do multi-agent review.
+**Fix**: Rewrote `execute_sanity_check()` to use the full iterative runtime before
+falling through to multi-agent review.
+
+**Status**: FIXED
+
+---
+
+## Friction Point #14: Review findings are write-only (no rework loop)
+
+**Severity**: HIGH
+**File**: `crates/mol-pipeline/src/stages_impl/phase3.rs`, `executor.rs`
+**Problem**: Multi-agent reviewers (plot-validator, critical-reviewer, etc.) write
+review reports but pipeline never reads them back. If a reviewer finds CRITICAL
+issues, the pipeline just moves to the next stage — no feedback → fix → re-review.
+**Expected**: After multi-agent review, check reports for CRITICAL/FAIL findings.
+If found, feed back to primary agent to fix, then re-review (bounded loop).
+**Fix**: Implemented `execute_multi_agentic_with_rework()` in executor.rs — generic rework
+wrapper that runs multi-agent review, scans reviewer artifacts for trigger phrases
+(CRITICAL, FAIL, MUST FIX, etc.), feeds findings back to primary agent, and re-reviews.
+Bounded by `max_rework` parameter (set to 2 for all stages).
+Wired into: SANITY_CHECK, PEER_REVIEW, QUALITY_GATE.
+
+**Status**: FIXED
+
+---
+
+## Friction Point #15: CODE_GENERATION agent runs full experiment
+
+**Severity**: LOW (positive surprise)
+**File**: Observed in E2E stage-11
+**Problem**: The CODE_GENERATION agent (stage 11) not only writes code but also
+executes it, generating 29 files including figures (PDF+PNG), pyhf workspaces,
+and run reports. This goes beyond the intended scope (code writing only), but
+the outputs are high quality (Z resonance fits, Brazil bands, cutflow plots).
+**Impact**: EXPERIMENT_RUN (stage 14) may be partially redundant. Consider whether
+to constrain CODE_GENERATION or embrace the agent's initiative.
+**Fix**: No fix needed — document as expected agentic behavior. EXPERIMENT_RUN
+will still run the "official" experiment with proper resource tracking.
+
+**Status**: NOTED
+
+---
+
+## Friction Point #16: Front-end / Back-end artifact name mismatch
+
+**Severity**: HIGH
+**File**: `frontend/src/types.ts`, `crates/mol-services/src/agent_bridge.rs`
+**Problem**: Pipeline produces artifacts with different names than frontend expects.
+Examples: pipeline writes `synthesis_report.md` but frontend expects `synthesis.md`;
+pipeline writes `analysis_report.md` but frontend expects `analysis.md`.
+Also: agent_bridge.rs `stage_outputs()` and `stage_to_layer()` are missing stages
+23-26 entirely. New multi-agent artifacts (plot_validation.md, critical_review.md,
+etc.) have no frontend registration.
+**Fix**: TODO — align after backend stabilizes. See full mismatch table in
+conversation log dated 2026-04-09.
+
+**Status**: TODO (deferred until backend stable)
+
+---
+
+## Friction Point #17: Claude Code context window exhaustion during E2E monitoring
+
+**Severity**: HIGH
+**File**: N/A (tooling limitation)
+**Problem**: When using Claude Code to monitor a long-running pipeline E2E test, the
+conversation context fills up with repeated heartbeat checks, artifact reads, large code
+diffs, and friction-point analysis. The session hits the context limit and requires a
+"continue from summary" restart, losing fine-grained state (exact line numbers being
+edited, in-progress rework reasoning, uncommitted code changes).
+Two prior sessions were lost this way during the 2026-04-09 E2E run:
+1. First session: exhausted after implementing multi-agent parallel execution + stage_log +
+   iterative sanity check + monitoring stages 1-12
+2. Second session: exhausted after implementing rework loop + resuming pipeline at stage 14
+**Expected**: Monitoring should not consume context so aggressively.
+**Mitigation**:
+1. Use `run_in_background` for pipeline monitoring instead of `sleep N && check`
+2. Commit code changes frequently before context fills
+3. Record friction points immediately in docs/ rather than holding them in context
+4. Use the friction log as durable memory instead of relying on conversation state
+
+**Status**: MITIGATED (process change, not a code fix)
+
+---
+
+## Friction Point #18: Pipeline resume generates new run_id, confusing
+
+**Severity**: LOW
+**File**: `crates/mol-cli/src/commands/run.rs`
+**Problem**: When resuming with `--resume --output <existing-dir>`, the pipeline prints a
+NEW run_id (`mol-20260409-165938-9e9916`) even though it writes to the old directory.
+Heartbeat shows the new run_id but checkpoint shows the old one. This is cosmetically
+confusing but functionally correct — resume works, stages continue from checkpoint.
+**Expected**: Resume should reuse the original run_id, or at least log clearly that
+it's continuing a prior run.
+**Fix**: Minor — cosmetic only, not blocking.
+
+**Status**: NOTED

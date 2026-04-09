@@ -152,12 +152,121 @@ pub async fn execute_code_generation(stage: Stage, ctx: &StageContext) -> StageR
 // SanityCheck
 // ---------------------------------------------------------------------------
 
-/// Execute the SanityCheck stage via multi-agent executor.
+/// Execute the SanityCheck stage with iterative code-fix loop + multi-agent review.
 ///
-/// Primary: cross-checker produces `sanity_report.md`.
-/// Reviewer: plot-validator produces `plot_validation.md`.
+/// 1. Find experiment code from prior stages
+/// 2. Prepare isolated workspace
+/// 3. LLM agent runs code, checks output, fixes errors (iterative loop)
+/// 4. Copy fixes back to experiment directory
+/// 5. Multi-agent review: cross-checker + plot-validator
 pub async fn execute_sanity_check(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_multi_agentic};
+    use crate::executor::llm_generate;
+    use crate::runtimes::sanity_check::{
+        find_experiment_dir, prepare_workspace, list_experiment_files,
+        build_system_prompt, build_user_message, check_success,
+        copy_fixes_back, load_plan_summary,
+    };
+
+    let stage_dir = ctx.stage_dir(stage);
+    let _ = fs::create_dir_all(&stage_dir);
+
+    // Step 1: Find experiment code
+    let experiment_dir = match find_experiment_dir(&ctx.run_dir) {
+        Some(d) => d,
+        None => {
+            tracing::warn!("No experiment directory found; skipping iterative sanity check");
+            // Fall through to multi-agent review only
+            return run_sanity_review(stage, ctx).await;
+        }
+    };
+
+    // Step 2: Prepare workspace
+    let workspace = match prepare_workspace(&stage_dir, &experiment_dir, &ctx.run_dir, &ctx.config) {
+        Ok(ws) => ws,
+        Err(e) => {
+            tracing::warn!("Failed to prepare sanity workspace: {e}; falling back to review-only");
+            return run_sanity_review(stage, ctx).await;
+        }
+    };
+
+    // Step 3: Iterative fix loop
+    let max_iterations = ctx.config.settings.get("sanity_check_max_iterations")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(5);
+
+    let python_path = ctx.config.settings.get("python_path")
+        .map(|s| s.as_str())
+        .unwrap_or("python3");
+
+    let system_prompt = build_system_prompt(python_path, &workspace);
+    let plan_summary = load_plan_summary(&ctx.run_dir);
+    let files = list_experiment_files(&workspace);
+    let user_prompt = build_user_message(&workspace, &files, &plan_summary);
+
+    let mut iteration = 0u32;
+    let mut last_response = String::new();
+    let mut passed = false;
+
+    while iteration < max_iterations {
+        iteration += 1;
+        tracing::info!(
+            stage = %stage.name(),
+            iteration,
+            max_iterations,
+            "Sanity check iteration"
+        );
+
+        match llm_generate(ctx, stage, &system_prompt, &user_prompt).await {
+            Ok(response) => {
+                last_response = response;
+                passed = check_success(&last_response, &[], iteration, max_iterations);
+                if passed {
+                    tracing::info!(stage = %stage.name(), iteration, "Sanity check passed");
+                    break;
+                }
+                tracing::info!(
+                    stage = %stage.name(),
+                    iteration,
+                    "Sanity check not yet passed, continuing..."
+                );
+            }
+            Err(e) => {
+                tracing::warn!(stage = %stage.name(), iteration, "LLM call failed: {e}");
+                break;
+            }
+        }
+    }
+
+    // Step 4: Copy fixes back
+    match copy_fixes_back(&workspace, &experiment_dir) {
+        Ok(n) if n > 0 => {
+            tracing::info!(stage = %stage.name(), files_copied = n, "Copied fixes back to experiment dir");
+        }
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!("Failed to copy fixes back: {e}");
+        }
+    }
+
+    // Write iterative check summary
+    let summary = format!(
+        "# Sanity Check Summary\n\n\
+         - Iterations: {iteration}/{max_iterations}\n\
+         - Result: {}\n\
+         - Workspace: {}\n\n\
+         ## Agent Response (last iteration)\n\n{last_response}",
+        if passed { "PASSED" } else { "NOT PASSED" },
+        workspace.display(),
+    );
+    let _ = fs::write(stage_dir.join("sanity_summary.md"), &summary);
+
+    // Step 5: Multi-agent review (cross-checker + plot-validator)
+    run_sanity_review(stage, ctx).await
+}
+
+/// Run the multi-agent review portion of sanity check.
+async fn run_sanity_review(stage: Stage, ctx: &StageContext) -> StageResult {
+    use crate::executor::{ArtifactSpec, execute_multi_agentic_with_rework};
 
     let primary_specs = vec![
         ArtifactSpec {
@@ -177,7 +286,7 @@ pub async fn execute_sanity_check(stage: Stage, ctx: &StageContext) -> StageResu
         ]),
     ];
 
-    execute_multi_agentic(stage, ctx, &primary_specs, &reviewer_specs).await
+    execute_multi_agentic_with_rework(stage, ctx, &primary_specs, &reviewer_specs, 2).await
 }
 
 // ---------------------------------------------------------------------------
