@@ -65,3 +65,5 @@ Output:
   "reproducibility_score": "pass|conditional|fail"
 }
 ```
+
+{{ output_spec | default(value="") }}

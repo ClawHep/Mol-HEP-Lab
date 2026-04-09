@@ -35,3 +35,5 @@ Output as a JSONL file where each line is one paper:
 ```
 
 Aim to collect 20-100 candidates. Prioritize papers from the last 5 years unless the topic requires historical context.
+
+{{ output_spec | default(value="") }}

@@ -33,3 +33,5 @@ Produce two artifacts:
    - `sub_problems` (list of strings)
    - `key_challenges` (list of strings)
    - `estimated_phases` (int): how many pipeline phases are critical
+
+{{ output_spec | default(value="") }}

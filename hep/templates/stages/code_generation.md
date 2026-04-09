@@ -43,3 +43,5 @@ Requirements:
 
 Write production-quality code. Include error handling, logging, and progress indicators.
 Match patterns discovered in the codebase survey.
+
+{{ output_spec | default(value="") }}

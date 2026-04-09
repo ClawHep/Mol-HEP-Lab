@@ -44,3 +44,5 @@ After proposing refinements, output the updated experiment code:
 
 Then provide the refined main.py as:
 `experiment_final/main.py` — updated experiment code incorporating all approved refinements.
+
+{{ output_spec | default(value="") }}

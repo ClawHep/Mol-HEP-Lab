@@ -67,3 +67,5 @@ Output:
   "recommendation": "approve_for_publication|requires_revision|reject"
 }
 ```
+
+{{ output_spec | default(value="") }}

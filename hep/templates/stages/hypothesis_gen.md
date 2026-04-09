@@ -50,3 +50,5 @@ Output:
 
 [Repeat for each hypothesis]
 ```
+
+{{ output_spec | default(value="") }}

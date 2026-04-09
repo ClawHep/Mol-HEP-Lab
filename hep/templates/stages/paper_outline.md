@@ -57,3 +57,5 @@ Output as:
 
 [Detailed section-by-section outline]
 ```
+
+{{ output_spec | default(value="") }}

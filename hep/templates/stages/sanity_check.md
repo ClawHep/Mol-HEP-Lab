@@ -59,3 +59,5 @@ Output:
   "recommendation": "proceed|fix_and_recheck"
 }
 ```
+
+{{ output_spec | default(value="") }}

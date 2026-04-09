@@ -67,3 +67,5 @@ statistical_model:
 validation_plan: []
 software_stack: [pyhf, uproot, hist, vector, awkward-array, mplhep]
 ```
+
+{{ output_spec | default(value="") }}

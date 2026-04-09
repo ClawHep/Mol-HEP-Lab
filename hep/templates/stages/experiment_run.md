@@ -55,3 +55,5 @@ Output:
   "plots_generated": []
 }
 ```
+
+{{ output_spec | default(value="") }}

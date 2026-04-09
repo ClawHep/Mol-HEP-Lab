@@ -44,3 +44,5 @@ Output:
 // exclusion_reasons.json
 [{"inspire_key": "...", "title": "...", "reason": "...", "exclusion_category": "superseded|duplicate|out_of_scope|low_quality|incompatible_setup"}]
 ```
+
+{{ output_spec | default(value="") }}

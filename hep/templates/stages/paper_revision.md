@@ -63,3 +63,5 @@ Output:
 ## Summary of All Changes
 [Itemized list of every change made to the paper]
 ```
+
+{{ output_spec | default(value="") }}

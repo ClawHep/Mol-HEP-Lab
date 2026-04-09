@@ -44,3 +44,5 @@ Output as:
 <!-- paper_draft.md -->
 [Full paper draft in Markdown with LaTeX math]
 ```
+
+{{ output_spec | default(value="") }}

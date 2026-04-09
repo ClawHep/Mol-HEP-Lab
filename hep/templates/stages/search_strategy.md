@@ -59,3 +59,5 @@ Then output:
 // queries.json
 [{"database": "...", "query": "...", "expected_yield": "...", "priority": "high|medium|low"}]
 ```
+
+{{ output_spec | default(value="") }}

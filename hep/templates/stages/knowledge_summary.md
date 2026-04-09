@@ -58,3 +58,5 @@ Output:
   "recommended_future_work": [...]
 }
 ```
+
+{{ output_spec | default(value="") }}

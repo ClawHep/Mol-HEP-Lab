@@ -56,3 +56,5 @@ Output:
 // schedule.json
 [{"task": "...", "depends_on": [...], "cpu_hours": ..., "can_parallelize": true, "priority": ...}]
 ```
+
+{{ output_spec | default(value="") }}

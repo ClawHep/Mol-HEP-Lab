@@ -60,3 +60,5 @@ Output:
   "ready_for_submission": true
 }
 ```
+
+{{ output_spec | default(value="") }}

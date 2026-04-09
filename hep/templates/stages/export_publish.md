@@ -55,3 +55,5 @@ Output:
 \documentclass[...]{...}
 % [Full LaTeX document]
 ```
+
+{{ output_spec | default(value="") }}

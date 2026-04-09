@@ -49,3 +49,5 @@ Output:
 // citation_map.json
 {"nodes": [{"id": "inspire_key", "title": "..."}], "edges": [{"from": "...", "to": "...", "context": "..."}]}
 ```
+
+{{ output_spec | default(value="") }}

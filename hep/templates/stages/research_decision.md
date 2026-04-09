@@ -52,3 +52,5 @@ Output:
   "resource_assessment": "..."
 }
 ```
+
+{{ output_spec | default(value="") }}

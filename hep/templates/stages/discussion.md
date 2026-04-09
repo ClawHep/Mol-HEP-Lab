@@ -42,3 +42,5 @@ Produce a thorough discussion covering:
 4. Systematic uncertainties — dominant sources, reduction strategies
 5. Results interpretation — statistical significance, physics implications
 6. Publication readiness — what remains before the analysis note is complete
+
+{{ output_spec | default(value="") }}

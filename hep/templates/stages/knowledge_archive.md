@@ -68,3 +68,5 @@ Output:
   "fair_compliance": {}
 }
 ```
+
+{{ output_spec | default(value="") }}

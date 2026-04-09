@@ -60,3 +60,5 @@ Output:
 // experiment_summary.json
 {"topic": "...", "analysis_type": "...", "primary_result": {}, "systematics_breakdown": [], "comparison_to_prior": [], "bsm_exclusion": {}, "statistical_validity": {}, "anomalies": []}
 ```
+
+{{ output_spec | default(value="") }}

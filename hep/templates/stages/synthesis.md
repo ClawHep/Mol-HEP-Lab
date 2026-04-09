@@ -51,3 +51,5 @@ Output:
 // gap_analysis.json
 [{"gap_id": "...", "description": "...", "type": "signal_model|phase_space|technique|dataset", "priority": "high|medium|low", "supporting_refs": [...]}]
 ```
+
+{{ output_spec | default(value="") }}

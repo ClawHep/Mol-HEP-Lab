@@ -49,3 +49,5 @@ Output:
 // relevant_files.json
 [{"path": "...", "purpose": "...", "reuse_potential": "high|medium|low", "notes": "..."}]
 ```
+
+{{ output_spec | default(value="") }}
