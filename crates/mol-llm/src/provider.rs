@@ -31,6 +31,16 @@ pub trait LlmProvider: Send + Sync {
     /// Check if the provider is available and configured.
     async fn preflight(&self) -> Result<String>;
 
+    /// Reset session state between stages to prevent context leakage.
+    /// CLI/ACP: close and recreate session. API: no-op.
+    async fn reset_session(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Set the working directory for the next LLM call.
+    /// Default: no-op (API providers don't need this).
+    async fn set_cwd(&self, _path: &std::path::Path) {}
+
     /// Human-readable name for logging.
     fn name(&self) -> &str;
 }
@@ -94,6 +104,17 @@ impl LlmProvider for CliProvider {
         } else {
             anyhow::bail!("CLI preflight failed: {}", result.message)
         }
+    }
+
+    async fn reset_session(&self) -> Result<()> {
+        let mut client = self.inner.lock().await;
+        client.close().await;
+        Ok(())
+    }
+
+    async fn set_cwd(&self, path: &std::path::Path) {
+        let mut client = self.inner.lock().await;
+        client.config.cwd = path.to_path_buf();
     }
 
     fn name(&self) -> &str {
