@@ -28,4 +28,19 @@ stage_agents:
   KNOWLEDGE_ARCHIVE: note-writer
   EXPORT_PUBLISH: note-writer
   CITATION_VERIFY: note-writer
-  # DISCUSSION: absent = no agent
+  DISCUSSION: note-writer
+
+# Advisory agents: role definitions injected as {{ advisor_roles }}.
+# The primary agent gets their expertise as reference context.
+advisors:
+  EXPERIMENT_DESIGN: [detector-specialist, data-explorer]
+  CODEBASE_SEARCH: [data-explorer, detector-specialist]
+  CODE_GENERATION: [background-estimator, ml-specialist, plot-validator]
+  SANITY_CHECK: [plot-validator, critical-reviewer]
+  EXPERIMENT_RUN: [background-estimator]
+  ITERATIVE_REFINE: [systematic-source-evaluator, ml-specialist]
+  RESULT_ANALYSIS: [systematic-source-evaluator]
+  PEER_REVIEW: [critical-reviewer, constructive-reviewer]
+  QUALITY_GATE: [plot-validator, rendering-reviewer, critical-reviewer]
+  EXPORT_PUBLISH: [rendering-reviewer]
+  DISCUSSION: [lead-analyst, theory-scout, cross-checker]

@@ -312,6 +312,106 @@ impl StageContext {
             vars.insert("blinding_protocol".into(), content);
         }
 
+        // --- Methodology knowledge injection ---
+        // Each variable is loaded from the knowledge chain and only injected
+        // if the file exists, so missing files gracefully result in empty vars.
+
+        // Core principles (01-principles.md) — applies to all stages
+        if let Some(c) = self.read_knowledge("methodology/01-principles.md") {
+            vars.insert("principles".into(), c);
+        }
+
+        // Input specification (02-inputs.md) — Phase 1 only
+        if let Some(c) = self.read_knowledge("methodology/02-inputs.md") {
+            vars.insert("inputs_spec".into(), c);
+        }
+
+        // Phase-specific requirements: extract relevant section from 03-phases.md
+        if let Some(full) = self.read_knowledge("methodology/03-phases.md") {
+            let section = extract_phase_section(&full, stage.phase().number());
+            if !section.is_empty() {
+                vars.insert("phase_requirements".into(), section);
+            }
+        }
+
+        // Phase checklist from appendix-checklist.md (fold into phase_requirements)
+        if let Some(c) = self.read_knowledge("methodology/appendix-checklist.md") {
+            let section = extract_phase_section(&c, stage.phase().number());
+            if !section.is_empty() {
+                vars.entry("phase_requirements".into())
+                    .and_modify(|v| { v.push_str("\n\n## Phase Checklist\n\n"); v.push_str(&section); })
+                    .or_insert(section);
+            }
+        }
+
+        // Artifact format (05-artifacts.md)
+        if let Some(c) = self.read_knowledge("methodology/05-artifacts.md") {
+            vars.insert("artifact_format".into(), c);
+        }
+
+        // Review protocol (06-review.md) — for review/gate stages
+        if let Some(c) = self.read_knowledge("methodology/06-review.md") {
+            vars.insert("review_protocol".into(), c);
+        }
+
+        // Tool standards (07-tools.md) — for code-producing stages
+        if let Some(c) = self.read_knowledge("methodology/07-tools.md") {
+            // Fold heuristics into tools
+            let mut tools = c;
+            if let Some(h) = self.read_knowledge("methodology/appendix-heuristics.md") {
+                tools.push_str("\n\n## Tool Heuristics\n\n");
+                tools.push_str(&h);
+            }
+            vars.insert("tools".into(), tools);
+        }
+
+        // Multichannel guidance (09-multichannel.md)
+        if let Some(c) = self.read_knowledge("methodology/09-multichannel.md") {
+            vars.insert("multichannel".into(), c);
+        }
+
+        // Coding standards (11-coding.md)
+        if let Some(c) = self.read_knowledge("methodology/11-coding.md") {
+            vars.insert("coding_standards".into(), c);
+        }
+
+        // Downscoping guidance (12-downscoping.md)
+        if let Some(c) = self.read_knowledge("methodology/12-downscoping.md") {
+            vars.insert("downscoping".into(), c);
+        }
+
+        // Analysis note structure (analysis-note.md) — Phase 5 writing stages
+        if let Some(c) = self.read_knowledge("methodology/analysis-note.md") {
+            vars.insert("analysis_note_structure".into(), c);
+        }
+
+        // Plotting standards (appendix-plotting.md)
+        if let Some(c) = self.read_knowledge("methodology/appendix-plotting.md") {
+            vars.insert("plotting_standards".into(), c);
+        }
+
+        // Domain profile (domain.yaml)
+        if let Some(c) = self.read_knowledge("domain.yaml") {
+            vars.insert("domain_profile".into(), c);
+        }
+
+        // --- Advisory agent roles ---
+        // Concatenate role definitions of advisory agents for this stage.
+        let advisors = agent_mapping.advisors_for(stage);
+        if !advisors.is_empty() {
+            let mut advisor_text = String::new();
+            for advisor_name in &advisors {
+                if let Some(raw) = self.read_knowledge(&format!("agents/{advisor_name}.md")) {
+                    advisor_text.push_str(&format!("### Advisory: {advisor_name}\n\n"));
+                    advisor_text.push_str(strip_frontmatter(&raw));
+                    advisor_text.push_str("\n\n---\n\n");
+                }
+            }
+            if !advisor_text.is_empty() {
+                vars.insert("advisor_roles".into(), advisor_text);
+            }
+        }
+
         vars
     }
 }
@@ -489,6 +589,156 @@ pub async fn execute_agentic(
     }
 }
 
+/// Execute a multi-agent stage: primary agent runs first, then each reviewer
+/// runs sequentially reading the primary artifact and producing review files.
+///
+/// Used for review stages (PEER_REVIEW, QUALITY_GATE, SANITY_CHECK) where
+/// multiple expert perspectives add value.
+pub async fn execute_multi_agentic(
+    stage: Stage,
+    ctx: &StageContext,
+    primary_specs: &[ArtifactSpec],
+    reviewers: &[(&str, Vec<ArtifactSpec>)], // (agent_name, expected_artifacts)
+) -> StageResult {
+    // Step 1: Run primary agent (produces main artifact)
+    let mut result = execute_agentic(stage, ctx, primary_specs).await;
+    if result.status == StageStatus::Failed {
+        return result;
+    }
+
+    let engine = match ctx.prompt_engine.as_ref() {
+        Some(e) => e,
+        None => return result, // Already succeeded for primary, just skip reviewers
+    };
+
+    let provider = match ctx.llm.as_ref() {
+        Some(p) => p,
+        None => return result,
+    };
+
+    let stage_dir = ctx.stage_dir(stage);
+
+    // Read primary artifacts into memory for passing to reviewers
+    let mut primary_context: HashMap<String, String> = HashMap::new();
+    for spec in primary_specs {
+        let path = stage_dir.join(&spec.filename);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            let key = spec.filename.trim_end_matches(".md").replace('.', "_");
+            primary_context.insert(format!("primary_{key}"), content);
+        }
+    }
+
+    // Step 2: Prepare and launch all reviewers in parallel
+    let mut join_set = tokio::task::JoinSet::new();
+
+    for (agent_name, reviewer_specs) in reviewers {
+        // Build vars with reviewer's agent role overriding the primary
+        let mut vars = ctx.template_vars(stage);
+        vars.insert("output_spec".to_owned(), build_output_spec(reviewer_specs));
+
+        // Override agent_role with reviewer's role
+        if let Some(raw) = ctx.read_knowledge(&format!("agents/{agent_name}.md")) {
+            vars.insert("agent_role".into(), strip_frontmatter(&raw).to_owned());
+        }
+
+        // Add primary artifact as context for reviewer
+        for (k, v) in &primary_context {
+            vars.insert(k.clone(), v.clone());
+        }
+
+        let (system, user) = match engine.render_prompt(stage, &vars) {
+            Ok(pair) => pair,
+            Err(e) => {
+                tracing::warn!(
+                    stage = %stage.name(),
+                    reviewer = *agent_name,
+                    "Reviewer template render failed: {e}"
+                );
+                continue;
+            }
+        };
+
+        // Spawn an independent provider instance for this reviewer
+        let reviewer_provider = match provider.spawn_instance(agent_name).await {
+            Ok(p) => p,
+            Err(e) => {
+                tracing::warn!(
+                    stage = %stage.name(),
+                    reviewer = *agent_name,
+                    "Failed to spawn provider instance: {e} — skipping"
+                );
+                continue;
+            }
+        };
+
+        let stage_dir_clone = stage_dir.clone();
+        let agent_name_owned = agent_name.to_string();
+        let stage_name = stage.name().to_string();
+        let reviewer_specs_owned: Vec<ArtifactSpec> = reviewer_specs.clone();
+
+        join_set.spawn(async move {
+            // Set cwd so agent writes to the correct directory
+            reviewer_provider.set_cwd(&stage_dir_clone).await;
+
+            let messages = vec![
+                mol_llm::Message::system(&system),
+                mol_llm::Message::user(&user),
+            ];
+            let resp = reviewer_provider.chat(&messages, false).await;
+
+            (agent_name_owned, stage_name, stage_dir_clone, reviewer_specs_owned, resp)
+        });
+    }
+
+    // Step 3: Collect results from all parallel reviewers
+    while let Some(join_result) = join_set.join_next().await {
+        let (agent_name, stage_name, dir, specs, resp) = match join_result {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Reviewer task panicked: {e}");
+                continue;
+            }
+        };
+
+        match resp {
+            Ok(response) => {
+                for spec in &specs {
+                    let path = dir.join(&spec.filename);
+                    if path.exists() && std::fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
+                        result.artifacts.push(spec.filename.clone());
+                        info!(
+                            stage = %stage_name,
+                            reviewer = %agent_name,
+                            artifact = %spec.filename,
+                            "Reviewer artifact written"
+                        );
+                    } else if !response.content.is_empty() {
+                        // Fallback: write response as the review file
+                        let content = simple_clean(&response.content);
+                        if let Ok(()) = std::fs::write(&path, &content) {
+                            result.artifacts.push(spec.filename.clone());
+                            tracing::warn!(
+                                stage = %stage_name,
+                                reviewer = %agent_name,
+                                artifact = %spec.filename,
+                                "Reviewer did not write file; used response text fallback"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    stage = %stage_name,
+                    reviewer = %agent_name,
+                    "Reviewer LLM call failed: {e} — skipping"
+                );
+            }
+        }
+    }
+
+    result
+}
 
 // ---------------------------------------------------------------------------
 // Low-level LLM call
@@ -518,6 +768,41 @@ pub async fn llm_generate(
         .context("LLM chat call failed")?;
 
     Ok(resp.content)
+}
+
+/// Extract the section of a methodology document relevant to a given phase.
+///
+/// Looks for headings containing "Phase {n}" (e.g. "## Phase 3" or "### Phase 3:
+/// Processing") and returns everything up to the next same-level heading.
+/// Returns empty string if no matching section is found.
+fn extract_phase_section(text: &str, phase_num: u8) -> String {
+    let phase_str = format!("Phase {phase_num}");
+    let mut result = String::new();
+    let mut capturing = false;
+    let mut capture_level = 0u8;
+
+    for line in text.lines() {
+        if let Some(hashes) = line.split_whitespace().next() {
+            if hashes.chars().all(|c| c == '#') {
+                let level = hashes.len() as u8;
+                if line.contains(&phase_str) && !capturing {
+                    capturing = true;
+                    capture_level = level;
+                    result.push_str(line);
+                    result.push('\n');
+                    continue;
+                } else if capturing && level <= capture_level {
+                    break;
+                }
+            }
+        }
+        if capturing {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+
+    result.trim().to_owned()
 }
 
 /// Strip YAML frontmatter (delimited by `---`) from a markdown document.
@@ -1840,6 +2125,21 @@ mod tests {
     #[test]
     fn strip_frontmatter_empty_returns_empty() {
         assert_eq!(strip_frontmatter(""), "");
+    }
+
+    #[test]
+    fn extract_phase_section_finds_phase() {
+        let text = "# Overview\nSome intro.\n\n## Phase 1: Strategy\nPhase 1 content.\n\n## Phase 2: Exploration\nPhase 2 content.\n\n## Phase 3: Processing\nPhase 3 content.\n";
+        let section = extract_phase_section(text, 2);
+        assert!(section.starts_with("## Phase 2"));
+        assert!(section.contains("Phase 2 content"));
+        assert!(!section.contains("Phase 3"));
+    }
+
+    #[test]
+    fn extract_phase_section_empty_when_no_match() {
+        let text = "## Phase 1\nOnly phase 1.";
+        assert!(extract_phase_section(text, 5).is_empty());
     }
 
 }

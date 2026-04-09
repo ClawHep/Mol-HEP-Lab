@@ -4,20 +4,24 @@
 //! hypotheses, and experiment findings from a HEP analysis perspective.
 
 use crate::executor::{StageContext, StageResult};
-use crate::stages::{Stage, StageStatus};
+use crate::stages::Stage;
+#[cfg(test)]
+use crate::stages::StageStatus;
 
 // ---------------------------------------------------------------------------
 // Discussion
 // ---------------------------------------------------------------------------
 
-/// Execute the Discussion stage via agentic executor.
+/// Execute the Discussion stage via multi-agent parallel executor.
 ///
-/// Produces `discussion_notes.md` with a structured multi-agent discussion
-/// transcript covering synthesis, hypotheses, and experiment findings.
+/// Primary agent (note-writer) produces `discussion_notes.md`, then three
+/// independent participants contribute in parallel: lead-analyst writes
+/// `analyst_perspective.md`, theory-scout writes `theory_perspective.md`,
+/// and cross-checker writes `checker_perspective.md`.
 pub async fn execute_discussion(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_agentic};
+    use crate::executor::{ArtifactSpec, execute_multi_agentic};
 
-    let specs = vec![
+    let primary_specs = vec![
         ArtifactSpec {
             filename: "discussion_notes.md".into(),
             description: "multi-perspective discussion transcript — structured debate between \
@@ -26,7 +30,31 @@ pub async fn execute_discussion(stage: Stage, ctx: &StageContext) -> StageResult
         },
     ];
 
-    execute_agentic(stage, ctx, &specs).await
+    let reviewer_specs: Vec<(&str, Vec<ArtifactSpec>)> = vec![
+        ("lead-analyst", vec![
+            ArtifactSpec {
+                filename: "analyst_perspective.md".into(),
+                description: "lead analyst perspective — methodology evaluation, result \
+                    significance, physics implications, and strategic recommendations".into(),
+            },
+        ]),
+        ("theory-scout", vec![
+            ArtifactSpec {
+                filename: "theory_perspective.md".into(),
+                description: "theory perspective — theoretical context, model comparisons, \
+                    BSM implications, and connections to broader physics landscape".into(),
+            },
+        ]),
+        ("cross-checker", vec![
+            ArtifactSpec {
+                filename: "checker_perspective.md".into(),
+                description: "cross-checker perspective — internal consistency checks, \
+                    potential biases, reproducibility concerns, and validation gaps".into(),
+            },
+        ]),
+    ];
+
+    execute_multi_agentic(stage, ctx, &primary_specs, &reviewer_specs).await
 }
 
 // ---------------------------------------------------------------------------

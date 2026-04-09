@@ -16,6 +16,16 @@ End with a "Consensus & Next Steps" section summarizing agreed actions.
 
 {{ blinding_protocol | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
 ---user---
 
 Generate a multi-agent discussion for the following HEP analysis.

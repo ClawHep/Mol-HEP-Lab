@@ -9,6 +9,21 @@ and normalize citation keys to INSPIRE-HEP conventions.
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
 ---user---
 
 Collect HEP literature according to the search plan below.

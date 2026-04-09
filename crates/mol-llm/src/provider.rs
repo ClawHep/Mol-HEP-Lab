@@ -41,6 +41,12 @@ pub trait LlmProvider: Send + Sync {
     /// Default: no-op (API providers don't need this).
     async fn set_cwd(&self, _path: &std::path::Path) {}
 
+    /// Create an independent provider instance for parallel execution.
+    ///
+    /// CLI: spawns a new ACPClient with session name `"{base}-{suffix}"`.
+    /// API: creates a fresh stateless client from the same config.
+    async fn spawn_instance(&self, suffix: &str) -> Result<Arc<dyn LlmProvider>>;
+
     /// Human-readable name for logging.
     fn name(&self) -> &str;
 }
@@ -62,6 +68,12 @@ impl LlmProvider for LLMClient {
         } else {
             anyhow::bail!("API preflight failed: {}", result.message)
         }
+    }
+
+    async fn spawn_instance(&self, _suffix: &str) -> Result<Arc<dyn LlmProvider>> {
+        // API client is stateless — just clone config and create a fresh client
+        let client = LLMClient::new(self.config().clone())?;
+        Ok(Arc::new(client))
     }
 
     fn name(&self) -> &str {
@@ -115,6 +127,15 @@ impl LlmProvider for CliProvider {
     async fn set_cwd(&self, path: &std::path::Path) {
         let mut client = self.inner.lock().await;
         client.config.cwd = path.to_path_buf();
+    }
+
+    async fn spawn_instance(&self, suffix: &str) -> Result<Arc<dyn LlmProvider>> {
+        let client = self.inner.lock().await;
+        let mut cfg = client.config.clone();
+        cfg.session_name = format!("{}-{suffix}", cfg.session_name);
+        drop(client); // release lock
+        let new_client = ACPClient::new(cfg);
+        Ok(Arc::new(CliProvider::new(new_client)))
     }
 
     fn name(&self) -> &str {

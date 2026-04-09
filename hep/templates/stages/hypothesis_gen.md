@@ -10,6 +10,31 @@ each hypothesis in Standard Model or BSM theory and connect it to feasible analy
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if datasets %}
+## Available Datasets
+{{ datasets }}
+{% endif %}
+
+{% if blinding_protocol %}
+## Blinding Protocol
+{{ blinding_protocol }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
 ---user---
 
 Formulate falsifiable scientific hypotheses for the following HEP research topic.

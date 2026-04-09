@@ -10,6 +10,26 @@ conclusions.
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if review_protocol %}
+## Review Protocol
+{{ review_protocol }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
 ---user---
 
 Screen the collected HEP literature candidates for relevance and quality.

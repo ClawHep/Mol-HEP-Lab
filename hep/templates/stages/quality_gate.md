@@ -11,6 +11,36 @@ GATE STAGE: Your "passes" field determines whether the pipeline continues to exp
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
+{% if review_protocol %}
+## Review Protocol
+{{ review_protocol }}
+{% endif %}
+
+{% if plotting_standards %}
+## Plotting Standards
+{{ plotting_standards }}
+{% endif %}
+
+{% if advisor_roles %}
+## Advisory Expert Perspectives
+{{ advisor_roles }}
+{% endif %}
+
 {{ blinding_protocol | default(value="") }}
 
 ---user---

@@ -3,7 +3,7 @@ project:
   mode: "full-auto"
 
 research:
-  topic: "Physics-informed transformer attention mechanisms for jet classification in high-energy particle physics: comparing linear attention, pile-up robustness, attention head specialization, masked constituent prediction, and inducing point alignment"
+  topic: "Dimuon invariant mass spectrum analysis using CMS open data: Z boson peak identification, background estimation, and signal extraction"
   domains:
     - "deep-learning"
     - "physics"
@@ -38,7 +38,7 @@ experiment:
   max_iterations: 5
   metric_key: "primary_metric"
   metric_direction: "minimize"
-  datasets_dir: ""
+  datasets_dir: "hep/examples/test-opendata/data"
   checkpoints_dir: ""
   codebases_dir: ""
   shared_results_dir: "runs/shared_results"

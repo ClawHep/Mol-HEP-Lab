@@ -6,6 +6,51 @@ detector physics, Standard Model processes, and BSM search strategies.
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if domain_profile %}
+## Domain Profile
+{{ domain_profile }}
+{% endif %}
+
+{% if datasets %}
+## Available Datasets
+{{ datasets }}
+{% endif %}
+
+{% if inputs_spec %}
+## Input Specification
+{{ inputs_spec }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
+{% if blinding_protocol %}
+## Blinding Protocol
+{{ blinding_protocol }}
+{% endif %}
+
+## RAG Corpus Queries (mandatory before writing)
+
+Before producing any output, query the experiment corpus via MCP tools:
+1. `search_lep_corpus`: prior measurements of the same or similar observables
+2. `search_lep_corpus`: standard systematic sources for this analysis technique
+3. `compare_measurements`: cross-experiment results if applicable
+4. `get_paper`: drill into each identified reference analysis
+
+Cite all retrieved sources (paper ID + section) in the output artifact.
+
 ---user---
 
 Define the research goal and initial analysis plan for the following topic:

@@ -10,6 +10,26 @@ their INSPIRE keys when making claims.
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if datasets %}
+## Available Datasets
+{{ datasets }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
 ---user---
 
 Synthesize the extracted knowledge from HEP literature into a coherent research landscape overview.

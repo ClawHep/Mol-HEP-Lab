@@ -274,7 +274,7 @@ impl ACPClient {
         let use_file = prompt.len() > MAX_CLI_PROMPT_BYTES;
 
         let mut last_err: Option<anyhow::Error> = None;
-        const MAX_RECONNECTS: u32 = 2;
+        const MAX_RECONNECTS: u32 = 5;
 
         for attempt in 0..=MAX_RECONNECTS {
             self.ensure_session().await?;
@@ -290,11 +290,15 @@ impl ACPClient {
                 Err(e) => {
                     let msg = e.to_string();
                     if RECONNECT_ERRORS.iter().any(|pat| msg.contains(pat)) && attempt < MAX_RECONNECTS {
+                        // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+                        let backoff = std::time::Duration::from_secs(2u64.pow(attempt + 1));
                         warn!(
                             attempt = attempt + 1,
+                            backoff_secs = backoff.as_secs(),
                             error = %e,
-                            "ACP session stale, reconnecting"
+                            "ACP session stale, reconnecting after backoff"
                         );
+                        tokio::time::sleep(backoff).await;
                         self.force_reconnect().await;
                         last_err = Some(e);
                     } else {

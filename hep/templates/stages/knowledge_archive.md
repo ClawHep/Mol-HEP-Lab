@@ -10,6 +10,21 @@ and HEPData for maximum findability. You identify which artifacts should be made
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
 ---user---
 
 Create a comprehensive archive manifest for the completed HEP analysis.

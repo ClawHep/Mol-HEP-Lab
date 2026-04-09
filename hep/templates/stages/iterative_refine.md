@@ -10,6 +10,61 @@ and blinding protocol compliance.
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
+{% if datasets %}
+## Available Datasets
+{{ datasets }}
+{% endif %}
+
+{% if blinding_protocol %}
+## Blinding Protocol
+{{ blinding_protocol }}
+{% endif %}
+
+{% if tools %}
+## HEP Tool Standards
+{{ tools }}
+{% endif %}
+
+{% if coding_standards %}
+## Coding Standards
+{{ coding_standards }}
+{% endif %}
+
+{% if plotting_standards %}
+## Plotting Standards
+{{ plotting_standards }}
+{% endif %}
+
+{% if multichannel %}
+## Multi-Channel Guidance
+{{ multichannel }}
+{% endif %}
+
+{% if advisor_roles %}
+## Advisory Expert Perspectives
+{{ advisor_roles }}
+{% endif %}
+
+{% if downscoping %}
+## Scope Management
+{{ downscoping }}
+{% endif %}
+
 ---user---
 
 Analyze the experiment run results and propose targeted refinements.

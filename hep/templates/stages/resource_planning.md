@@ -11,6 +11,36 @@ caching intermediate histograms).
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
+{% if datasets %}
+## Available Datasets
+{{ datasets }}
+{% endif %}
+
+{% if blinding_protocol %}
+## Blinding Protocol
+{{ blinding_protocol }}
+{% endif %}
+
+{% if downscoping %}
+## Scope Management
+{{ downscoping }}
+{% endif %}
+
 ---user---
 
 Plan compute resources for running the HEP experiment.

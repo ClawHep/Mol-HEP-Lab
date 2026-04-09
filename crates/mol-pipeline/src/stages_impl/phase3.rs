@@ -152,13 +152,14 @@ pub async fn execute_code_generation(stage: Stage, ctx: &StageContext) -> StageR
 // SanityCheck
 // ---------------------------------------------------------------------------
 
-/// Execute the SanityCheck stage via agentic executor.
+/// Execute the SanityCheck stage via multi-agent executor.
 ///
-/// Validates the experiment code and produces `sanity_report.md`.
+/// Primary: cross-checker produces `sanity_report.md`.
+/// Reviewer: plot-validator produces `plot_validation.md`.
 pub async fn execute_sanity_check(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_agentic};
+    use crate::executor::{ArtifactSpec, execute_multi_agentic};
 
-    let specs = vec![
+    let primary_specs = vec![
         ArtifactSpec {
             filename: "sanity_report.md".into(),
             description: "sanity check report — code review findings, potential issues, \
@@ -166,7 +167,17 @@ pub async fn execute_sanity_check(stage: Stage, ctx: &StageContext) -> StageResu
         },
     ];
 
-    execute_agentic(stage, ctx, &specs).await
+    let reviewer_specs: Vec<(&str, Vec<ArtifactSpec>)> = vec![
+        ("plot-validator", vec![
+            ArtifactSpec {
+                filename: "plot_validation.md".into(),
+                description: "plot validation report — programmatic checks on plotting code, \
+                    physics sanity of distributions, and figure quality assessment".into(),
+            },
+        ]),
+    ];
+
+    execute_multi_agentic(stage, ctx, &primary_specs, &reviewer_specs).await
 }
 
 // ---------------------------------------------------------------------------

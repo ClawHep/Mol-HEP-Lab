@@ -161,6 +161,31 @@ pub async fn execute_pipeline_with_llm(
 ) -> Result<PipelineSummary> {
     tokio::fs::create_dir_all(run_dir).await?;
 
+    // If user configured a local datasets directory, symlink it into the run
+    // directory so experiment workspaces can access it.  When this exists the
+    // template variable {{ datasets }} will show the local paths, and the
+    // experiment stages will analyse *only* user-provided data.
+    let user_datasets_dir = &config.datasets_dir;
+    if !user_datasets_dir.is_empty() {
+        let src = std::path::Path::new(user_datasets_dir);
+        let dst = run_dir.join("datasets");
+        if src.is_dir() && !dst.exists() {
+            #[cfg(unix)]
+            {
+                let _ = std::os::unix::fs::symlink(src, &dst);
+            }
+            info!(
+                src = %src.display(),
+                "Linked user datasets directory into run"
+            );
+        } else if !src.is_dir() {
+            warn!(
+                path = %src.display(),
+                "experiment.datasets_dir configured but directory does not exist"
+            );
+        }
+    }
+
     // Load the prompt engine once at pipeline start.
     let prompt_engine: Option<Arc<StagePromptEngine>> = {
         match config.knowledge_chain.templates_dir() {

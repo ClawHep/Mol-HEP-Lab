@@ -10,9 +10,51 @@ awkward-array (jagged array processing), mplhep (HEP-style plotting), and fastje
 
 GATE STAGE: Your output must be approved before code generation proceeds.
 
+## HEP Analysis Paradigm
+
+- Read NTuples with `uproot`; apply event selection with `awkward` boolean masks.
+- Build signal, control, and validation regions with strictly orthogonal cuts.
+- Control regions: one per major background, each with a dedicated validation strategy.
+- Background estimation: data-driven (`ABCD`, sideband, transfer factor) or MC-driven (with scale factors).
+- Construct `pyhf` likelihood with systematic nuisance parameters (NPs) — include at minimum:
+  JES, JER, b-tag SF, lepton efficiency SF, luminosity, PDF, and QCD scale uncertainties.
+- Blinding stages: Asimov data for initial sensitivity → 10% partial unblinding → full unblinding (requires approval).
+- Required reporting: cutflow tables, N-1 distributions, and fit diagnostics (NP pulls, impacts, ranking).
+- All plots: `mplhep` style, no titles, axis labels with units, √s and luminosity annotation.
+
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
+{% if datasets %}
+## Available Datasets
+{{ datasets }}
+{% endif %}
+
 {{ blinding_protocol | default(value="") }}
+
+{% if multichannel %}
+## Multi-Channel Guidance
+{{ multichannel }}
+{% endif %}
+
+{% if advisor_roles %}
+## Advisory Expert Perspectives
+{{ advisor_roles }}
+{% endif %}
 
 ---user---
 

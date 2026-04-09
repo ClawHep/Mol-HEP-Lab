@@ -186,6 +186,11 @@ impl LLMClient {
         self
     }
 
+    /// Return a reference to the underlying configuration.
+    pub fn config(&self) -> &LLMClientConfig {
+        &self.config
+    }
+
     // -----------------------------------------------------------------------
     // Public API
     // -----------------------------------------------------------------------

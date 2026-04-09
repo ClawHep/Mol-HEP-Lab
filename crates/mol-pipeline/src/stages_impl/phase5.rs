@@ -58,19 +58,36 @@ pub async fn execute_paper_draft(stage: Stage, ctx: &StageContext) -> StageResul
 
 /// Execute the PeerReview stage via agentic executor.
 ///
-/// Reads paper draft; produces `review_comments.md` with simulated multi-reviewer feedback.
+/// Multi-agent peer review: physics-reviewer (primary), then critical + constructive reviewers.
 pub async fn execute_peer_review(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_agentic};
+    use crate::executor::{ArtifactSpec, execute_multi_agentic};
 
-    let specs = vec![
+    let primary_specs = vec![
         ArtifactSpec {
             filename: "review_comments.md".into(),
-            description: "peer review comments — simulated multi-reviewer feedback with \
-                reviewer roles, per-section comments, severity ratings, and overall scores".into(),
+            description: "physics review — independent evaluation of analysis on physics merit, \
+                severity-rated findings (A/B/C), and publication readiness assessment".into(),
         },
     ];
 
-    execute_agentic(stage, ctx, &specs).await
+    let reviewer_specs: Vec<(&str, Vec<ArtifactSpec>)> = vec![
+        ("critical-reviewer", vec![
+            ArtifactSpec {
+                filename: "critical_review.md".into(),
+                description: "critical review — flaws in correctness and completeness, \
+                    conventions compliance, figure/label validation, issue classification".into(),
+            },
+        ]),
+        ("constructive-reviewer", vec![
+            ArtifactSpec {
+                filename: "constructive_review.md".into(),
+                description: "constructive review — clarity improvements, validation suggestions, \
+                    alternative approaches, presentation quality, positive reinforcement".into(),
+            },
+        ]),
+    ];
+
+    execute_multi_agentic(stage, ctx, &primary_specs, &reviewer_specs).await
 }
 
 // ---------------------------------------------------------------------------
@@ -105,14 +122,13 @@ pub async fn execute_paper_revision(stage: Stage, ctx: &StageContext) -> StageRe
 // QualityGate (5.5 GATE)
 // ---------------------------------------------------------------------------
 
-/// Execute the QualityGate stage via agentic executor.
+/// Multi-agent quality gate: arbiter (primary), then plot-validator + rendering-reviewer.
 ///
-/// Reads the revised paper; produces `quality_report.md`.
 /// Returns BlockedApproval if not auto-approved.
 pub async fn execute_quality_gate(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_agentic};
+    use crate::executor::{ArtifactSpec, execute_multi_agentic};
 
-    let specs = vec![
+    let primary_specs = vec![
         ArtifactSpec {
             filename: "quality_report.md".into(),
             description: "quality gate report — overall quality score (1-10), passes boolean, \
@@ -120,7 +136,24 @@ pub async fn execute_quality_gate(stage: Stage, ctx: &StageContext) -> StageResu
         },
     ];
 
-    let mut result = execute_agentic(stage, ctx, &specs).await;
+    let reviewer_specs: Vec<(&str, Vec<ArtifactSpec>)> = vec![
+        ("plot-validator", vec![
+            ArtifactSpec {
+                filename: "plot_validation.md".into(),
+                description: "plot validation — programmatic checks on all figures, \
+                    physics sanity, consistency, and red flags".into(),
+            },
+        ]),
+        ("rendering-reviewer", vec![
+            ArtifactSpec {
+                filename: "rendering_review.md".into(),
+                description: "rendering review — PDF compilation quality, figure rendering, \
+                    math typesetting, layout, cross-references, and citation formatting".into(),
+            },
+        ]),
+    ];
+
+    let mut result = execute_multi_agentic(stage, ctx, &primary_specs, &reviewer_specs).await;
     if result.status != StageStatus::Done {
         return result;
     }

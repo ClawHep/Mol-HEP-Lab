@@ -7,6 +7,55 @@ selection, background estimation, systematic evaluation, and statistical inferen
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if domain_profile %}
+## Domain Profile
+{{ domain_profile }}
+{% endif %}
+
+{% if datasets %}
+## Available Datasets
+{{ datasets }}
+{% endif %}
+
+{% if inputs_spec %}
+## Input Specification
+{{ inputs_spec }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
+{% if blinding_protocol %}
+## Blinding Protocol
+{{ blinding_protocol }}
+{% endif %}
+
+## Strategy Requirements
+
+- **Technique selection**: determine the analysis technique (search/exclusion, template fit,
+  unfolding, extraction) and justify. This determines which `conventions/` file applies in
+  later phases.
+- **Reference analysis table**: identify 2-3 published analyses closest in technique and
+  observable; tabulate their systematic programs. This table is a binding input to Phase 4
+  and Phase 5 reviews.
+- **Conventions enumeration**: for every systematic source in the applicable `conventions/`
+  file, state "Will implement" or "Not applicable because [reason]." Silent omissions are
+  Category A findings that block phase advancement.
+- **Background enumeration**: classify each background as irreducible, reducible, or
+  instrumental; estimate relative importance (order of magnitude).
+
 ---user---
 
 Decompose the following research goal into a structured problem tree:

@@ -206,7 +206,12 @@ pub fn get_contract(stage: Stage, overrides: Option<&ContractOverrides>) -> Stag
         // Special ----------------------------------------------------------
         Stage::Discussion => StageContract {
             required_inputs: vec![],
-            expected_outputs: vec!["discussion_notes".into()],
+            expected_outputs: vec![
+                "discussion_notes".into(),
+                "analyst_perspective".into(),
+                "theory_perspective".into(),
+                "checker_perspective".into(),
+            ],
         },
     }
 }
@@ -269,10 +274,17 @@ fn artifact_satisfied(name: &str, available: &[String]) -> bool {
         ("paper_outline", &["paper_outline.md"]),
         ("paper_draft", &["paper_draft.md"]),
         ("review_comments", &["review_comments.md", "review_comments.json"]),
+        ("critical_review", &["critical_review.md"]),
+        ("constructive_review", &["constructive_review.md"]),
         ("paper_revised", &["paper_revised.md"]),
         ("revision_notes", &["revision_notes.md"]),
         // Phase 5 (cont.): Finalization
         ("quality_report", &["quality_report.md", "quality_report.json"]),
+        ("plot_validation", &["plot_validation.md"]),
+        ("rendering_review", &["rendering_review.md"]),
+        ("analyst_perspective", &["analyst_perspective.md"]),
+        ("theory_perspective", &["theory_perspective.md"]),
+        ("checker_perspective", &["checker_perspective.md"]),
         ("archive_manifest", &["archive_manifest.md", "archive_manifest.json"]),
         ("paper_final", &["paper_final.md"]),
         ("paper_tex", &["paper.tex"]),

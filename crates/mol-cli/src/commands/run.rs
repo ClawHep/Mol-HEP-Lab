@@ -47,6 +47,11 @@ pub struct RunArgs {
     /// Disable graceful degradation: abort pipeline on quality-gate failure
     #[arg(long)]
     pub no_graceful_degradation: bool,
+
+    /// Path to user-provided datasets directory.
+    /// When set, experiment stages use ONLY data in this directory.
+    #[arg(short = 'd', long = "data")]
+    pub data: Option<PathBuf>,
 }
 
 /// Generate a run ID with the format `mol-{timestamp}-{hash}`.
@@ -163,6 +168,9 @@ pub async fn execute(args: RunArgs) -> Result<()> {
             .unwrap_or_else(|| "hep".to_owned()),
         analysis_type: full_config.research.analysis_type.clone(),
         knowledge_chain,
+        datasets_dir: args.data.as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| full_config.experiment.datasets_dir.clone()),
     };
 
     // Build pipeline config

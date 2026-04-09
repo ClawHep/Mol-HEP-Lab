@@ -16,12 +16,15 @@ use std::collections::HashMap;
 struct AgentMappingFile {
     #[serde(default)]
     stage_agents: HashMap<String, String>,
+    #[serde(default)]
+    advisors: HashMap<String, Vec<String>>,
 }
 
 /// Data-driven stage→agent mapping loaded from `agents.yaml` in the knowledge chain.
 #[derive(Debug, Clone, Default)]
 pub struct AgentMapping {
     map: HashMap<String, String>,
+    advisor_map: HashMap<String, Vec<String>>,
 }
 
 impl AgentMapping {
@@ -29,6 +32,7 @@ impl AgentMapping {
     /// then specific layers override).
     pub fn load(chain: &KnowledgeChain) -> Self {
         let mut map = HashMap::new();
+        let mut advisor_map: HashMap<String, Vec<String>> = HashMap::new();
         // Read in reverse order (general → specific) so specific wins
         let all_yaml = chain.read_all("agents.yaml");
         for yaml_content in all_yaml.into_iter().rev() {
@@ -36,14 +40,25 @@ impl AgentMapping {
                 for (stage_name, agent_name) in file.stage_agents {
                     map.insert(stage_name, agent_name);
                 }
+                for (stage_name, advisors) in file.advisors {
+                    advisor_map.insert(stage_name, advisors);
+                }
             }
         }
-        Self { map }
+        Self { map, advisor_map }
     }
 
     /// Look up agent for a stage. Returns None if no mapping exists.
     pub fn agent_for(&self, stage: Stage) -> Option<&str> {
         self.map.get(stage.name()).map(|s| s.as_str())
+    }
+
+    /// Look up advisory agents for a stage. Returns empty slice if none.
+    pub fn advisors_for(&self, stage: Stage) -> Vec<&str> {
+        self.advisor_map
+            .get(stage.name())
+            .map(|v| v.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -164,6 +179,25 @@ mod tests {
             mapping.agent_for(Stage::TopicInit),
             Some("general-analyst")
         );
+    }
+
+    #[test]
+    fn advisors_load_from_yaml() {
+        let dir = TempDir::new().unwrap();
+        let layer = dir.path().join("hep");
+        std::fs::create_dir_all(&layer).unwrap();
+        std::fs::write(
+            layer.join("agents.yaml"),
+            "stage_agents:\n  TOPIC_INIT: lead-analyst\nadvisors:\n  CODE_GENERATION: [background-estimator, ml-specialist]\n  SANITY_CHECK: [plot-validator]\n",
+        )
+        .unwrap();
+        let chain = KnowledgeChain::new(vec![layer]);
+        let mapping = AgentMapping::load(&chain);
+        assert_eq!(mapping.agent_for(Stage::TopicInit), Some("lead-analyst"));
+        let advisors = mapping.advisors_for(Stage::CodeGeneration);
+        assert_eq!(advisors, vec!["background-estimator", "ml-specialist"]);
+        assert_eq!(mapping.advisors_for(Stage::SanityCheck), vec!["plot-validator"]);
+        assert!(mapping.advisors_for(Stage::TopicInit).is_empty());
     }
 
     #[test]

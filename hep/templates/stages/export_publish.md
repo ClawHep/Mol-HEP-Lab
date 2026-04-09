@@ -10,6 +10,26 @@ HEP journal macros and ensure the LaTeX compiles without errors.
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
+{% if advisor_roles %}
+## Advisory Expert Perspectives
+{{ advisor_roles }}
+{% endif %}
+
 ---user---
 
 Finalize the HEP paper for publication submission.

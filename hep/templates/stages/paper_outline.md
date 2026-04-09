@@ -12,6 +12,26 @@ uncertainties, results, and conclusions.
 
 {{ conventions | default(value="") }}
 
+{% if principles %}
+## Analysis Principles
+{{ principles }}
+{% endif %}
+
+{% if phase_requirements %}
+## Phase Requirements
+{{ phase_requirements }}
+{% endif %}
+
+{% if artifact_format %}
+## Artifact Format Requirements
+{{ artifact_format }}
+{% endif %}
+
+{% if analysis_note_structure %}
+## Analysis Note Structure
+{{ analysis_note_structure }}
+{% endif %}
+
 ---user---
 
 Create a detailed outline for a HEP analysis paper on the following topic.
