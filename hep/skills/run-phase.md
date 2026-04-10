@@ -20,7 +20,7 @@ The argument is a phase identifier: `1`, `2`, `3`, `4a`, `4b`, `4c`, or `5`.
 
 ## Step 2: Read Phase Methodology
 
-Read `src/methodology/03-phases.md` and locate the section for the requested phase. Also read:
+Read `hep/methodology/03-phases.md` and locate the section for the requested phase. Also read:
 - `orchestration/agents.md` -- agent definitions
 - `orchestration/sessions.md` -- session naming and isolation
 - `CLAUDE.md` -- orchestration model

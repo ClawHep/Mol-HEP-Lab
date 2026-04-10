@@ -1,5 +1,5 @@
 import { useReducer, useEffect, useCallback, useRef, useState, useMemo } from 'react';
-import { AgentLayer, ALL_LAYERS, ALL_REPOS } from './types';
+import { AgentLayer, ALL_LAYERS, ALL_REPOS, normalizeLayer } from './types';
 import type { AppState, WSMessage, ResourceStats, MolAgent, Artifact } from './types';
 import { INITIAL_AGENTS, createMockMessageGenerator } from './mock';
 import LayerPanel from './components/LayerPanel';
@@ -43,8 +43,10 @@ function upsertAgent(agents: MolAgent[], payload: MolAgent): MolAgent[] {
 
 function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
-    case 'agent_update':
-      return { ...state, agents: upsertAgent(state.agents, action.payload) };
+    case 'agent_update': {
+      const normalized = { ...action.payload, layer: normalizeLayer(action.payload.layer) };
+      return { ...state, agents: upsertAgent(state.agents, normalized) };
+    }
     case 'stage_update':
       return {
         ...state,
@@ -67,8 +69,10 @@ function reducer(state: AppState, action: Action): AppState {
     }
     case 'resource_stats':
       return { ...state, resources: action.payload, resConnected: true };
-    case 'log':
-      return { ...state, logs: [...state.logs, action.payload] };
+    case 'log': {
+      const normalizedLog = { ...action.payload, layer: normalizeLayer(action.payload.layer) };
+      return { ...state, logs: [...state.logs, normalizedLog] };
+    }
     case 'chat_message':
       return { ...state, chatMessages: [...state.chatMessages, action.payload] };
     case 'set_connected':
@@ -241,26 +245,26 @@ export default function App() {
   // ── Memoized derived state ──
   const strategyAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.STRATEGY), [state.agents]);
   const explorationAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.EXPLORATION), [state.agents]);
-  const processingAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.PROCESSING), [state.agents]);
+  const processingAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.EXECUTION), [state.agents]);
   const inferenceAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.INFERENCE), [state.agents]);
   const documentationAgents = useMemo(() => state.agents.filter((a) => a.layer === AgentLayer.DOCUMENTATION), [state.agents]);
   const agentMap = useMemo(() => ({
     [AgentLayer.STRATEGY]: strategyAgents,
     [AgentLayer.EXPLORATION]: explorationAgents,
-    [AgentLayer.PROCESSING]: processingAgents,
+    [AgentLayer.EXECUTION]: processingAgents,
     [AgentLayer.INFERENCE]: inferenceAgents,
     [AgentLayer.DOCUMENTATION]: documentationAgents,
   }), [strategyAgents, explorationAgents, processingAgents, inferenceAgents, documentationAgents]);
 
   const strategyLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.STRATEGY), [state.logs]);
   const explorationLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.EXPLORATION), [state.logs]);
-  const processingLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.PROCESSING), [state.logs]);
+  const processingLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.EXECUTION), [state.logs]);
   const inferenceLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.INFERENCE), [state.logs]);
   const documentationLogs = useMemo(() => state.logs.filter((l) => l.layer === AgentLayer.DOCUMENTATION), [state.logs]);
   const logMap = useMemo(() => ({
     [AgentLayer.STRATEGY]: strategyLogs,
     [AgentLayer.EXPLORATION]: explorationLogs,
-    [AgentLayer.PROCESSING]: processingLogs,
+    [AgentLayer.EXECUTION]: processingLogs,
     [AgentLayer.INFERENCE]: inferenceLogs,
     [AgentLayer.DOCUMENTATION]: documentationLogs,
   }), [strategyLogs, explorationLogs, processingLogs, inferenceLogs, documentationLogs]);

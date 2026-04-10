@@ -198,8 +198,8 @@ mod tests {
     #[test]
     fn prompts_default_not_empty() {
         assert!(PROMPTS_DEFAULT_YAML.len() > 1000);
-        assert!(PROMPTS_DEFAULT_YAML.contains("code_generation"));
-        assert!(PROMPTS_DEFAULT_YAML.contains("paper_draft"));
+        assert!(PROMPTS_DEFAULT_YAML.contains("code_develop"));
+        assert!(PROMPTS_DEFAULT_YAML.contains("paper_write"));
     }
 
     #[test]

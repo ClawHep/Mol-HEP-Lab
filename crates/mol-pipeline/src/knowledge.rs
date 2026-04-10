@@ -139,14 +139,14 @@ mod tests {
         std::fs::create_dir_all(&layer).unwrap();
         std::fs::write(
             layer.join("agents.yaml"),
-            "stage_agents:\n  TOPIC_INIT: lead-analyst\n  CODE_GENERATION: signal-lead\n",
+            "stage_agents:\n  TOPIC_INIT: lead-analyst\n  CODE_DEVELOP: signal-lead\n",
         )
         .unwrap();
         let chain = KnowledgeChain::new(vec![layer]);
         let mapping = AgentMapping::load(&chain);
         assert_eq!(mapping.agent_for(Stage::TopicInit), Some("lead-analyst"));
         assert_eq!(
-            mapping.agent_for(Stage::CodeGeneration),
+            mapping.agent_for(Stage::CodeDevelop),
             Some("signal-lead")
         );
         assert_eq!(mapping.agent_for(Stage::Discussion), None);
@@ -161,18 +161,18 @@ mod tests {
         std::fs::create_dir_all(&general).unwrap();
         std::fs::write(
             general.join("agents.yaml"),
-            "stage_agents:\n  TOPIC_INIT: general-analyst\n  CODE_GENERATION: general-coder\n",
+            "stage_agents:\n  TOPIC_INIT: general-analyst\n  CODE_DEVELOP: general-coder\n",
         )
         .unwrap();
         std::fs::write(
             specific.join("agents.yaml"),
-            "stage_agents:\n  CODE_GENERATION: specific-coder\n",
+            "stage_agents:\n  CODE_DEVELOP: specific-coder\n",
         )
         .unwrap();
         let chain = KnowledgeChain::new(vec![specific, general]);
         let mapping = AgentMapping::load(&chain);
         assert_eq!(
-            mapping.agent_for(Stage::CodeGeneration),
+            mapping.agent_for(Stage::CodeDevelop),
             Some("specific-coder")
         );
         assert_eq!(
@@ -188,15 +188,14 @@ mod tests {
         std::fs::create_dir_all(&layer).unwrap();
         std::fs::write(
             layer.join("agents.yaml"),
-            "stage_agents:\n  TOPIC_INIT: lead-analyst\nadvisors:\n  CODE_GENERATION: [background-estimator, ml-specialist]\n  SANITY_CHECK: [plot-validator]\n",
+            "stage_agents:\n  TOPIC_INIT: lead-analyst\nadvisors:\n  CODE_DEVELOP: [background-estimator, ml-specialist, plot-validator]\n",
         )
         .unwrap();
         let chain = KnowledgeChain::new(vec![layer]);
         let mapping = AgentMapping::load(&chain);
         assert_eq!(mapping.agent_for(Stage::TopicInit), Some("lead-analyst"));
-        let advisors = mapping.advisors_for(Stage::CodeGeneration);
-        assert_eq!(advisors, vec!["background-estimator", "ml-specialist"]);
-        assert_eq!(mapping.advisors_for(Stage::SanityCheck), vec!["plot-validator"]);
+        let advisors = mapping.advisors_for(Stage::CodeDevelop);
+        assert_eq!(advisors, vec!["background-estimator", "ml-specialist", "plot-validator"]);
         assert!(mapping.advisors_for(Stage::TopicInit).is_empty());
     }
 

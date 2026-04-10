@@ -1,12 +1,23 @@
+{# Merged from: synthesis.md + hypothesis_gen.md #}
 {{ agent_role | default(value="") }}
 
-Generate testable hypotheses based on the synthesis.
+Synthesise extracted knowledge and generate testable hypotheses.
 
 {{ conventions | default(value="") }}
 
 ---user---
 
 Topic: {{ topic }}
+
+## Part 1: Synthesis
+
+Produce:
+
+1. **Synthesis report** — integrated view of the field
+2. **Gap analysis** — what is missing or under-explored
+3. **State of the art** — current best approaches and their limitations
+
+## Part 2: Hypothesis Generation
 
 Based on the synthesis and gap analysis, generate:
 

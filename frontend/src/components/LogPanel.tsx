@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { LAYER_META, ALL_LAYERS, STAGE_META, phaseOf, phaseStepLabel } from '../types';
+import { LAYER_META, ALL_LAYERS, STAGE_META, phaseStepLabel } from '../types';
 import type { LogEntry, AgentLayer } from '../types';
 import { useLocale } from '../i18n';
 
 function getLayerForStage(stage: number | null | undefined): AgentLayer | null {
   if (!stage) return null;
   if (stage >= 1 && stage <= 2) return 'strategy';
-  if (stage >= 3 && stage <= 8) return 'exploration';
+  if (stage >= 3 && stage <= 6) return 'exploration';
   if (stage === 100) return 'exploration';
-  if (stage >= 9 && stage <= 15) return 'processing';
-  if (stage >= 16 && stage <= 18) return 'inference';
-  if (stage >= 19 && stage <= 26) return 'documentation';
+  if (stage >= 7 && stage <= 10) return 'execution';
+  if (stage >= 11 && stage <= 13) return 'inference';
+  if (stage >= 14 && stage <= 18) return 'documentation';
   return null;
 }
 

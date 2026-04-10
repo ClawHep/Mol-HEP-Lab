@@ -94,13 +94,9 @@ pub fn get_contract(stage: Stage, overrides: Option<&ContractOverrides>) -> Stag
         },
 
         // Phase 2: Exploration ---------------------------------------------
-        Stage::SearchStrategy => StageContract {
+        Stage::LiteratureSearch => StageContract {
             required_inputs: vec!["problem_tree".into()],
-            expected_outputs: vec!["search_queries".into(), "source_list".into()],
-        },
-        Stage::LiteratureCollect => StageContract {
-            required_inputs: vec!["search_queries".into()],
-            expected_outputs: vec!["raw_papers".into(), "paper_metadata".into()],
+            expected_outputs: vec!["search_queries".into(), "source_list".into(), "raw_papers".into(), "paper_metadata".into()],
         },
         Stage::LiteratureScreen => StageContract {
             required_inputs: vec!["raw_papers".into(), "paper_metadata".into()],
@@ -110,18 +106,12 @@ pub fn get_contract(stage: Stage, overrides: Option<&ContractOverrides>) -> Stag
             required_inputs: vec!["screened_papers".into()],
             expected_outputs: vec!["knowledge_cards".into(), "citation_map".into()],
         },
-
-        // Phase 2 (cont.): Synthesis + Hypothesis --------------------------
-        Stage::Synthesis => StageContract {
+        Stage::SynthesisHypotheses => StageContract {
             required_inputs: vec!["knowledge_cards".into()],
-            expected_outputs: vec!["synthesis_report".into(), "gap_analysis".into()],
-        },
-        Stage::HypothesisGen => StageContract {
-            required_inputs: vec!["synthesis_report".into(), "gap_analysis".into()],
-            expected_outputs: vec!["hypotheses".into(), "rationale".into()],
+            expected_outputs: vec!["synthesis_report".into(), "gap_analysis".into(), "hypotheses".into(), "rationale".into()],
         },
 
-        // Phase 3: Processing ----------------------------------------------
+        // Phase 3: Execution -----------------------------------------------
         Stage::ExperimentDesign => StageContract {
             required_inputs: vec!["hypotheses".into()],
             expected_outputs: vec!["experiment_plan".into(), "success_criteria".into()],
@@ -130,27 +120,13 @@ pub fn get_contract(stage: Stage, overrides: Option<&ContractOverrides>) -> Stag
             required_inputs: vec!["experiment_plan".into()],
             expected_outputs: vec!["codebase_context".into(), "relevant_files".into()],
         },
-        Stage::CodeGeneration => StageContract {
+        Stage::CodeDevelop => StageContract {
             required_inputs: vec!["experiment_plan".into(), "codebase_context".into()],
-            expected_outputs: vec!["experiment_code".into(), "code_readme".into()],
+            expected_outputs: vec!["experiment_code".into(), "code_readme".into(), "sanity_report".into()],
         },
-        Stage::SanityCheck => StageContract {
+        Stage::ExperimentCycle => StageContract {
             required_inputs: vec!["experiment_code".into()],
-            expected_outputs: vec!["sanity_report".into()],
-        },
-        Stage::ResourcePlanning => StageContract {
-            required_inputs: vec!["experiment_plan".into(), "sanity_report".into()],
-            expected_outputs: vec!["resource_plan".into(), "compute_estimate".into()],
-        },
-
-        // Phase 3 (cont.): Execution ---------------------------------------
-        Stage::ExperimentRun => StageContract {
-            required_inputs: vec!["experiment_code".into(), "resource_plan".into()],
-            expected_outputs: vec!["raw_results".into(), "run_logs".into()],
-        },
-        Stage::IterativeRefine => StageContract {
-            required_inputs: vec!["raw_results".into(), "run_logs".into()],
-            expected_outputs: vec!["refined_results".into(), "refinement_log".into()],
+            expected_outputs: vec!["resource_plan".into(), "raw_results".into(), "run_logs".into(), "refined_results".into(), "refinement_log".into()],
         },
 
         // Phase 4: Inference -----------------------------------------------
@@ -172,17 +148,13 @@ pub fn get_contract(stage: Stage, overrides: Option<&ContractOverrides>) -> Stag
             required_inputs: vec!["knowledge_summary".into(), "hypotheses".into()],
             expected_outputs: vec!["paper_outline".into()],
         },
-        Stage::PaperDraft => StageContract {
+        Stage::PaperWrite => StageContract {
             required_inputs: vec!["paper_outline".into(), "analysis_report".into()],
-            expected_outputs: vec!["paper_draft".into()],
+            expected_outputs: vec!["paper_draft".into(), "paper_revised".into(), "revision_notes".into()],
         },
         Stage::PeerReview => StageContract {
             required_inputs: vec!["paper_draft".into()],
             expected_outputs: vec!["review_comments".into()],
-        },
-        Stage::PaperRevision => StageContract {
-            required_inputs: vec!["paper_draft".into(), "review_comments".into()],
-            expected_outputs: vec!["paper_revised".into(), "revision_notes".into()],
         },
 
         // Phase 5 (cont.): Finalization ------------------------------------
@@ -190,17 +162,9 @@ pub fn get_contract(stage: Stage, overrides: Option<&ContractOverrides>) -> Stag
             required_inputs: vec!["paper_revised".into()],
             expected_outputs: vec!["quality_report".into()],
         },
-        Stage::KnowledgeArchive => StageContract {
-            required_inputs: vec!["knowledge_summary".into(), "paper_revised".into()],
-            expected_outputs: vec!["archive_manifest".into()],
-        },
-        Stage::ExportPublish => StageContract {
-            required_inputs: vec!["paper_revised".into()],
-            expected_outputs: vec!["paper_final".into(), "paper_tex".into()],
-        },
-        Stage::CitationVerify => StageContract {
-            required_inputs: vec!["paper_final".into()],
-            expected_outputs: vec!["verification_report".into()],
+        Stage::Publish => StageContract {
+            required_inputs: vec!["paper_revised".into(), "knowledge_summary".into()],
+            expected_outputs: vec!["archive_manifest".into(), "paper_final".into(), "paper_tex".into(), "verification_report".into()],
         },
 
         // Special ----------------------------------------------------------

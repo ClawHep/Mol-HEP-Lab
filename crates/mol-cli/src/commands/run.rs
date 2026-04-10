@@ -24,7 +24,7 @@ pub struct RunArgs {
     #[arg(long)]
     pub from_stage: Option<String>,
 
-    /// Stop after this stage inclusive (e.g. HYPOTHESIS_GEN)
+    /// Stop after this stage inclusive (e.g. SYNTHESIS_HYPOTHESES)
     #[arg(long)]
     pub to_stage: Option<String>,
 
@@ -159,13 +159,33 @@ pub async fn execute(args: RunArgs) -> Result<()> {
 
     let executor_config = mol_pipeline::executor::MolConfig {
         topic: topic.clone(),
-        settings: std::collections::HashMap::new(),
-        domain: full_config
-            .research
-            .domains
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "hep".to_owned()),
+        settings: {
+            let mut s = std::collections::HashMap::new();
+            let exp = &full_config.experiment;
+            s.insert("sanity_check_max_iterations".into(), exp.sanity_check_max_iterations.to_string());
+            s.insert("max_iterations".into(), exp.max_iterations.to_string());
+            s.insert("time_budget_sec".into(), exp.time_budget_sec.to_string());
+            if !exp.codebases_dir.is_empty() {
+                s.insert("codebases_dir".into(), exp.codebases_dir.clone());
+            }
+            s
+        },
+        domain: {
+            // Prefer knowledge_root as the domain identifier (e.g. "hep", "ml"),
+            // because research.domains[] contains research categories ("deep-learning",
+            // "physics") which don't map to our domain-specific defaults.
+            let kr = &full_config.research.knowledge_root;
+            if !kr.is_empty() {
+                kr.clone()
+            } else {
+                full_config
+                    .research
+                    .domains
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "hep".to_owned())
+            }
+        },
         analysis_type: full_config.research.analysis_type.clone(),
         knowledge_chain,
         datasets_dir: args.data.as_ref()

@@ -34,14 +34,14 @@ use uuid::Uuid;
 
 pub const DISCUSSION_STAGE: u32 = 100;
 
-/// Maps stage number → layer name.
+/// Maps stage number → layer name (18-stage pipeline).
 pub fn stage_to_layer(stage: u32) -> Option<&'static str> {
     match stage {
-        1..=8 => Some("idea"),
-        9 => Some("experiment"),
-        10..=13 => Some("coding"),
-        14..=18 => Some("execution"),
-        19..=22 => Some("writing"),
+        1..=6 => Some("idea"),         // Strategy + Exploration
+        7 => Some("experiment"),       // ExperimentDesign (gate)
+        8..=10 => Some("coding"),      // CodebaseSearch + CodeDevelop + ExperimentCycle
+        11..=13 => Some("execution"),  // ResultAnalysis + ResearchDecision + KnowledgeSummary
+        14..=18 => Some("writing"),    // PaperOutline..Publish
         _ => None,
     }
 }
@@ -49,11 +49,11 @@ pub fn stage_to_layer(stage: u32) -> Option<&'static str> {
 /// Stage numbers per layer.
 pub fn layer_stages(layer: &str) -> &'static [u32] {
     match layer {
-        "idea" => &[1, 2, 3, 4, 5, 6, 7, 100, 8],
-        "experiment" => &[9],
-        "coding" => &[10, 11, 12, 13],
-        "execution" => &[14, 15, 16, 17, 18],
-        "writing" => &[19, 20, 21, 22],
+        "idea" => &[1, 2, 3, 4, 5, 6, 100],
+        "experiment" => &[7],
+        "coding" => &[8, 9, 10],
+        "execution" => &[11, 12, 13],
+        "writing" => &[14, 15, 16, 17, 18],
         _ => &[],
     }
 }
@@ -61,12 +61,12 @@ pub fn layer_stages(layer: &str) -> &'static [u32] {
 /// (first_stage, last_stage) inclusive for a layer.
 pub fn layer_range(layer: &str) -> (u32, u32) {
     match layer {
-        "idea" => (1, 8),
-        "experiment" => (9, 9),
-        "coding" => (10, 13),
-        "execution" => (14, 18),
-        "writing" => (19, 22),
-        _ => (1, 22),
+        "idea" => (1, 6),
+        "experiment" => (7, 7),
+        "coding" => (8, 10),
+        "execution" => (11, 13),
+        "writing" => (14, 18),
+        _ => (1, 18),
     }
 }
 
@@ -74,30 +74,22 @@ pub fn stage_name(stage: u32) -> &'static str {
     match stage {
         1 => "TOPIC_INIT",
         2 => "PROBLEM_DECOMPOSE",
-        3 => "SEARCH_STRATEGY",
-        4 => "LITERATURE_COLLECT",
-        5 => "LITERATURE_SCREEN",
-        6 => "KNOWLEDGE_EXTRACT",
-        7 => "SYNTHESIS",
-        8 => "HYPOTHESIS_GEN",
-        9 => "EXPERIMENT_DESIGN",
-        10 => "CODEBASE_SEARCH",
-        11 => "CODE_GENERATION",
-        12 => "SANITY_CHECK",
-        13 => "RESOURCE_PLANNING",
-        14 => "EXPERIMENT_RUN",
-        15 => "ITERATIVE_REFINE",
-        16 => "RESULT_ANALYSIS",
-        17 => "RESEARCH_DECISION",
-        18 => "KNOWLEDGE_SUMMARY",
-        19 => "PAPER_OUTLINE",
-        20 => "PAPER_DRAFT",
-        21 => "PEER_REVIEW",
-        22 => "PAPER_REVISION",
-        23 => "QUALITY_GATE",
-        24 => "KNOWLEDGE_ARCHIVE",
-        25 => "EXPORT_PUBLISH",
-        26 => "CITATION_VERIFY",
+        3 => "LITERATURE_SEARCH",
+        4 => "LITERATURE_SCREEN",
+        5 => "KNOWLEDGE_EXTRACT",
+        6 => "SYNTHESIS_HYPOTHESES",
+        7 => "EXPERIMENT_DESIGN",
+        8 => "CODEBASE_SEARCH",
+        9 => "CODE_DEVELOP",
+        10 => "EXPERIMENT_CYCLE",
+        11 => "RESULT_ANALYSIS",
+        12 => "RESEARCH_DECISION",
+        13 => "KNOWLEDGE_SUMMARY",
+        14 => "PAPER_OUTLINE",
+        15 => "PAPER_WRITE",
+        16 => "PEER_REVIEW",
+        17 => "QUALITY_GATE",
+        18 => "PUBLISH",
         100 => "DISCUSSION",
         _ => "UNKNOWN",
     }
@@ -106,27 +98,23 @@ pub fn stage_name(stage: u32) -> &'static str {
 pub fn stage_outputs(stage: u32) -> &'static [&'static str] {
     match stage {
         1 => &["goal.md", "hardware_profile.json"],
-        2 => &["problem_tree.md"],
-        3 => &["search_plan.yaml", "sources.json", "queries.json"],
-        4 => &["candidates.jsonl"],
-        5 => &["shortlist.jsonl"],
-        6 => &["cards/"],
-        7 => &["synthesis.md"],
-        8 => &["hypotheses.md"],
-        9 => &["exp_plan.yaml"],
-        10 => &["codebase_candidates.json"],
-        11 => &["experiment/", "experiment_spec.md"],
-        12 => &["sanity_report.json"],
-        13 => &["schedule.json"],
-        14 => &["runs/"],
-        15 => &["refinement_log.json", "experiment_final/"],
-        16 => &["analysis.md", "experiment_summary.json", "charts/"],
-        17 => &["decision.md"],
-        18 => &["knowledge_entry.json"],
-        19 => &["outline.md"],
-        20 => &["paper_draft.md"],
-        21 => &["reviews.md"],
-        22 => &["paper_revised.md", "latex_package.zip"],
+        2 => &["problem_tree.md", "topic_evaluation.json"],
+        3 => &["search_plan.yaml", "sources.json", "queries.json", "candidates.jsonl"],
+        4 => &["screened_papers.jsonl", "exclusion_reasons.json"],
+        5 => &["knowledge_cards.json", "citation_map.json"],
+        6 => &["synthesis_report.md", "gap_analysis.json", "hypotheses.md"],
+        7 => &["exp_plan.yaml"],
+        8 => &["codebase_context.md"],
+        9 => &["experiment/", "experiment_spec.md", "sanity_report.json"],
+        10 => &["resource_plan.json", "runs/", "refinement_log.json", "experiment_final/"],
+        11 => &["analysis_report.md", "experiment_summary.json"],
+        12 => &["decision_record.json"],
+        13 => &["knowledge_summary.md"],
+        14 => &["paper_outline.md"],
+        15 => &["paper_draft.md", "paper_revised.md", "revision_notes.md"],
+        16 => &["review_comments.json"],
+        17 => &["quality_report.md"],
+        18 => &["archive_manifest.json", "paper_final.md", "paper.tex", "verification_report.json"],
         _ => &[],
     }
 }
@@ -151,12 +139,12 @@ pub fn is_display_artifact(name: &str) -> bool {
 
 pub fn repo_for_stage(stage: u32) -> &'static str {
     match stage {
-        1..=8 => "knowledge",
-        9 => "exp_design",
-        10..=13 => "codebase",
-        14..=17 => "results",
-        18 => "insights",
-        19..=22 => "papers",
+        1..=6 => "knowledge",       // Strategy + Exploration
+        7 => "exp_design",          // ExperimentDesign (gate)
+        8..=10 => "codebase",       // CodebaseSearch + CodeDevelop + ExperimentCycle
+        11..=13 => "results",       // ResultAnalysis + ResearchDecision + KnowledgeSummary
+        14..=17 => "papers",        // PaperOutline..QualityGate
+        18 => "insights",           // Publish (archive + export)
         _ => "knowledge",
     }
 }
@@ -1990,13 +1978,13 @@ fn select_best_hypothesis(_state: &BridgeState, group: &DiscussionGroup) -> Stri
             _ => continue,
         };
         let mut score = 0i64;
-        let hypo = PathBuf::from(rd).join("stage-08/hypotheses.md");
+        let hypo = PathBuf::from(rd).join("stage-06/hypotheses.md");
         if let Ok(text) = std::fs::read_to_string(&hypo) {
             score += text.len() as i64;
             score += text.to_lowercase().matches("hypothesis").count() as i64 * 500;
             score += text.matches("## ").count() as i64 * 300;
         }
-        if PathBuf::from(rd).join("stage-08/novelty_report.json").exists() {
+        if PathBuf::from(rd).join("stage-06/novelty_report.json").exists() {
             score += 2000;
         }
         if score > best_score {
@@ -2190,8 +2178,8 @@ pub fn on_agent_done(state: &BridgeState, agent_id: &str) -> Vec<Value> {
         // L4→L5: only if decision.md says PROCEED
         let should_push = if layer == "execution" && output_queue_name == "execution_to_writing" {
             // Check decision from stage-17 — may be decision.md or decision_record.json
-            let dec_md = PathBuf::from(&run_dir).join("stage-17/decision.md");
-            let dec_json = PathBuf::from(&run_dir).join("stage-17/decision_record.json");
+            let dec_md = PathBuf::from(&run_dir).join("stage-12/decision.md");
+            let dec_json = PathBuf::from(&run_dir).join("stage-12/decision_record.json");
             let text = if dec_md.exists() {
                 std::fs::read_to_string(&dec_md).unwrap_or_default().to_uppercase()
             } else if dec_json.exists() {
@@ -3348,7 +3336,7 @@ pub fn check_s12_sanity_failure(state: &BridgeState, agent_id: &str) -> Vec<Valu
         return messages;
     }
 
-    let sanity_path = PathBuf::from(&run_dir).join("stage-12/sanity_report.json");
+    let sanity_path = PathBuf::from(&run_dir).join("stage-09/sanity_report.json");
     if !sanity_path.exists() {
         return messages;
     }
@@ -3362,7 +3350,7 @@ pub fn check_s12_sanity_failure(state: &BridgeState, agent_id: &str) -> Vec<Valu
     }
 
     // Read fix_log.json for error details
-    let fix_log_path = PathBuf::from(&run_dir).join("stage-12/fix_log.json");
+    let fix_log_path = PathBuf::from(&run_dir).join("stage-09/fix_log.json");
     let error_detail = if let Some(fix_log) = read_json(&fix_log_path) {
         if let Some(arr) = fix_log.as_array() {
             if let Some(last) = arr.last() {
@@ -3389,15 +3377,15 @@ pub fn check_s12_sanity_failure(state: &BridgeState, agent_id: &str) -> Vec<Valu
     };
 
     // Find experiment dir from stage-11
-    let exp_dir = PathBuf::from(&run_dir).join("stage-11/experiment");
+    let exp_dir = PathBuf::from(&run_dir).join("stage-09/experiment");
     let exp_dir_str = if exp_dir.exists() {
         exp_dir.to_string_lossy().into_owned()
     } else {
-        format!("{}/stage-11", run_dir)
+        format!("{}/stage-09", run_dir)
     };
 
     let intervention_reason = format!(
-        "S12 代码验收失败，循环修复次数耗尽。实验目录：{}。错误详情：{}",
+        "S9 CODE_DEVELOP 代码验收失败，循环修复次数耗尽。实验目录：{}。错误详情：{}",
         exp_dir_str, error_detail
     );
 
@@ -3416,7 +3404,7 @@ pub fn check_s12_sanity_failure(state: &BridgeState, agent_id: &str) -> Vec<Valu
 
     messages.push(msg_log_sys(
         &format!(
-            "S12 SANITY_CHECK 验收失败，项目 [{}] 需要人工干预",
+            "S9 CODE_DEVELOP 验收失败，项目 [{}] 需要人工干预",
             project_id
         ),
         "error",
@@ -4053,14 +4041,14 @@ mod tests {
     fn test_layer_range_idea() {
         let (start, end) = layer_range("idea");
         assert_eq!(start, 1);
-        assert_eq!(end, 8);
+        assert_eq!(end, 6);
     }
 
     #[test]
     fn test_layer_range_coding() {
         let (start, end) = layer_range("coding");
-        assert_eq!(start, 10);
-        assert_eq!(end, 13);
+        assert_eq!(start, 8);
+        assert_eq!(end, 10);
     }
 
     #[test]

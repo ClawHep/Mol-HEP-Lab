@@ -1,33 +1,25 @@
-# HEP stage-to-agent mapping.
+# HEP stage-to-agent mapping (18-stage consolidated pipeline).
 # Keys are SCREAMING_SNAKE_CASE stage names (from Stage::name()).
 # Values are agent file stems in agents/ directory.
 stage_agents:
   TOPIC_INIT: lead-analyst
   PROBLEM_DECOMPOSE: lead-analyst
-  SEARCH_STRATEGY: investigator
-  LITERATURE_COLLECT: investigator
+  LITERATURE_SEARCH: investigator           # ← SearchStrategy + LiteratureCollect
   LITERATURE_SCREEN: investigator
   KNOWLEDGE_EXTRACT: investigator
-  SYNTHESIS: theory-scout
-  HYPOTHESIS_GEN: lead-analyst
+  SYNTHESIS_HYPOTHESES: theory-scout        # ← Synthesis + HypothesisGen
   EXPERIMENT_DESIGN: lead-analyst
   CODEBASE_SEARCH: signal-lead
-  CODE_GENERATION: signal-lead
-  SANITY_CHECK: cross-checker
-  RESOURCE_PLANNING: lead-analyst
-  EXPERIMENT_RUN: signal-lead
-  ITERATIVE_REFINE: systematics-fitter
+  CODE_DEVELOP: signal-lead                 # ← CodeGeneration + SanityCheck
+  EXPERIMENT_CYCLE: systematics-fitter      # ← ResourcePlanning + ExperimentRun + IterativeRefine
   RESULT_ANALYSIS: lead-analyst
   RESEARCH_DECISION: arbiter
   KNOWLEDGE_SUMMARY: lead-analyst
   PAPER_OUTLINE: note-writer
-  PAPER_DRAFT: note-writer
+  PAPER_WRITE: note-writer                  # ← PaperDraft + PaperRevision
   PEER_REVIEW: physics-reviewer
-  PAPER_REVISION: note-writer
   QUALITY_GATE: arbiter
-  KNOWLEDGE_ARCHIVE: note-writer
-  EXPORT_PUBLISH: note-writer
-  CITATION_VERIFY: note-writer
+  PUBLISH: note-writer                      # ← KnowledgeArchive + ExportPublish + CitationVerify
   DISCUSSION: note-writer
 
 # Advisory agents: role definitions injected as {{ advisor_roles }}.
@@ -35,12 +27,10 @@ stage_agents:
 advisors:
   EXPERIMENT_DESIGN: [detector-specialist, data-explorer]
   CODEBASE_SEARCH: [data-explorer, detector-specialist]
-  CODE_GENERATION: [background-estimator, ml-specialist, plot-validator]
-  SANITY_CHECK: [plot-validator, critical-reviewer]
-  EXPERIMENT_RUN: [background-estimator]
-  ITERATIVE_REFINE: [systematic-source-evaluator, ml-specialist]
+  CODE_DEVELOP: [background-estimator, ml-specialist, plot-validator]   # ← from CodeGeneration + SanityCheck
+  EXPERIMENT_CYCLE: [background-estimator, systematic-source-evaluator, ml-specialist]  # ← from ExperimentRun + IterativeRefine
   RESULT_ANALYSIS: [systematic-source-evaluator]
   PEER_REVIEW: [critical-reviewer, constructive-reviewer]
   QUALITY_GATE: [plot-validator, rendering-reviewer, critical-reviewer]
-  EXPORT_PUBLISH: [rendering-reviewer]
+  PUBLISH: [rendering-reviewer]                                         # ← from ExportPublish
   DISCUSSION: [lead-analyst, theory-scout, cross-checker]

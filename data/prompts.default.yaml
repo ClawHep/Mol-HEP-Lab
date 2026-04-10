@@ -69,7 +69,7 @@ blocks:
 
     '
 stages:
-  code_generation:
+  code_develop:
     max_tokens: 8192
     system: You are a computational scientist who writes real, runnable experiments. Your code implements actual algorithms
       with real mathematical operations. You NEVER fake results with random number generators. Always use the ```filename:xxx.py
@@ -103,7 +103,7 @@ stages:
       Hypotheses:
 
       {hypotheses}'
-  export_publish:
+  publish_export:
     max_tokens: 16384
     system: You are a publication formatting editor.
     user: 'Format revised paper into clean final markdown for publication export.
@@ -113,7 +113,7 @@ stages:
       Input paper:
 
       {revised}'
-  hypothesis_gen:
+  synthesis_hypotheses_gen:
     system: You formulate testable scientific hypotheses.
     user: 'Generate at least 2 falsifiable hypotheses from synthesis.
 
@@ -122,7 +122,7 @@ stages:
       Synthesis:
 
       {synthesis}'
-  knowledge_archive:
+  publish_archive:
     system: You produce reproducibility-focused research retrospectives.
     user: '{preamble}
 
@@ -154,7 +154,7 @@ stages:
       Shortlist:
 
       {shortlist}'
-  literature_collect:
+  literature_search_collect:
     json_mode: true
     system: You are a literature mining assistant.
     user: 'Generate candidate papers from the search plan.
@@ -189,7 +189,7 @@ stages:
       Candidates JSONL:
 
       {candidates_text}'
-  paper_draft:
+  paper_write:
     max_tokens: 32768
     system: "You are a top-tier ML paper author writing for NeurIPS/ICML/ICLR.\n\n\
       KEY PRINCIPLES (from accepted paper analyses):\n\
@@ -259,7 +259,7 @@ stages:
       Decision:
 
       {decision}'
-  paper_revision:
+  paper_write_revision:
     max_tokens: 32768
     system: You are a paper revision expert for NeurIPS/ICML/ICLR submissions. When revising, NEVER shorten existing sections — only expand, improve, and add content. The final paper must be at least as long as the draft.
     user: 'Revise the paper draft to address all review comments.
@@ -352,7 +352,7 @@ stages:
       Analysis:
 
       {analysis}'
-  resource_planning:
+  experiment_cycle_planning:
     json_mode: true
     system: You are an experiment scheduler.
     user: 'Create schedule JSON with GPU/time estimates.
@@ -379,7 +379,7 @@ stages:
       Run context:
 
       {context}'
-  search_strategy:
+  literature_search_strategy:
     json_mode: true
     system: You design literature retrieval strategies and source verification plans. You aim for COMPREHENSIVE coverage — a good research paper needs 30-60 references.
     user: 'Create a merged search strategy package.
@@ -397,7 +397,7 @@ stages:
       Problem tree:
 
       {problem_tree}'
-  synthesis:
+  synthesis_hypotheses:
     system: You are a synthesis specialist for literature reviews.
     user: 'Produce merged synthesis output (topic clusters + research gaps).
 

@@ -101,9 +101,9 @@ pub fn validate_config(
             Some(seq) => {
                 for item in seq {
                     match item.as_i64() {
-                        Some(n) if (1..=23).contains(&n) => {}
+                        Some(n) if (1..=18).contains(&n) => {}
                         Some(n) => errors.push(format!(
-                            "Invalid security.hitl_required_stages entry: {n} (must be 1-23)"
+                            "Invalid security.hitl_required_stages entry: {n} (must be 1-18)"
                         )),
                         None => errors.push(format!(
                             "Invalid security.hitl_required_stages entry: {item:?} (must be integer)"

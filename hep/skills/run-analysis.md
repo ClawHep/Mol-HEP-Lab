@@ -25,9 +25,9 @@ The argument is either:
 
 Read the following files to understand the phase requirements and orchestration protocol:
 
-- `src/methodology/03-phases.md` -- what each phase must produce
-- `src/methodology/04-blinding.md` -- blinding protocol and human gate
-- `src/methodology/06-review.md` -- review tiers and iteration rules
+- `hep/methodology/03-phases.md` -- what each phase must produce
+- `hep/methodology/04-blinding.md` -- blinding protocol and human gate
+- `hep/methodology/06-review.md` -- review tiers and iteration rules
 - `orchestration/agents.md` -- agent session definitions
 - `orchestration/automation.md` -- automation pseudocode
 - `orchestration/sessions.md` -- session isolation and naming
@@ -109,7 +109,7 @@ Now execute the full pipeline. At each phase transition, update STATE.md with th
 1. Update STATE.md: phase=1, status=executing
 2. Spawn `lead-analyst` agent via `SendMessage`:
    - Task: Execute Phase 1 (Strategy)
-   - Inputs: `prompt.md`, `src/methodology/03-phases.md` (Phase 1 section), `analysis_config.yaml`
+   - Inputs: `prompt.md`, `hep/methodology/03-phases.md` (Phase 1 section), `analysis_config.yaml`
    - **Must read:** applicable `conventions/` files for naming and coding standards
    - Working directory: `analyses/{analysis_name}/phase1_strategy/`
    - Output: `exec/STRATEGY.md`, append to `experiment_log.md`, code in `scripts/`, figures in `figures/`
@@ -126,7 +126,7 @@ Now execute the full pipeline. At each phase transition, update STATE.md with th
    - `data-explorer`: inventory samples, check data quality
    - `detector-specialist`: validate detector model, object definitions
    - `theory-scout`: survey theory predictions, cross-sections, backgrounds
-   - All read: `prompt.md`, `phase1_strategy/exec/STRATEGY.md` (latest), `src/methodology/03-phases.md` (Phase 2 section)
+   - All read: `prompt.md`, `phase1_strategy/exec/STRATEGY.md` (latest), `hep/methodology/03-phases.md` (Phase 2 section)
    - **Must read:** applicable `conventions/` files
    - All write to: `analyses/{analysis_name}/phase2_exploration/`
    - All scripts must use `pixi run` for execution
@@ -144,7 +144,7 @@ Now execute the full pipeline. At each phase transition, update STATE.md with th
 3. For each channel (or the single analysis), spawn agents **in parallel**:
    - `signal-lead`: implement event selection, define regions
    - `background-estimator`: estimate backgrounds, perform closure tests
-   - Inputs: `prompt.md`, `STRATEGY.md`, `EXPLORATION.md`, `src/methodology/03-phases.md` (Phase 3 section)
+   - Inputs: `prompt.md`, `STRATEGY.md`, `EXPLORATION.md`, `hep/methodology/03-phases.md` (Phase 3 section)
    - **Must read:** applicable `conventions/` files
    - Output: `exec/SELECTION.md` (or `exec/SELECTION_{CHANNEL}.md`)
    - All scripts must use `pixi run` for execution
@@ -158,7 +158,7 @@ Now execute the full pipeline. At each phase transition, update STATE.md with th
 1. Update STATE.md: phase=4a, status=executing
 2. Spawn `systematic-source-evaluator` agents **in parallel** (one per systematic source identified in the strategy)
    - Each evaluates one systematic uncertainty source
-   - Inputs: `STRATEGY.md`, `SELECTION.md`, `src/methodology/03-phases.md` (Phase 4a section)
+   - Inputs: `STRATEGY.md`, `SELECTION.md`, `hep/methodology/03-phases.md` (Phase 4a section)
    - **Must read:** applicable `conventions/` files
    - All scripts must use `pixi run` for execution
 3. After all complete, spawn `systematics-fitter`:

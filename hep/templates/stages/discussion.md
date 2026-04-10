@@ -26,6 +26,11 @@ End with a "Consensus & Next Steps" section summarizing agreed actions.
 {{ phase_requirements }}
 {% endif %}
 
+{% if advisor_roles %}
+## Advisory Expert Perspectives
+{{ advisor_roles }}
+{% endif %}
+
 ---user---
 
 Generate a multi-agent discussion for the following HEP analysis.

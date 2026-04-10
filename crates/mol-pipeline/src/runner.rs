@@ -217,8 +217,25 @@ pub async fn execute_pipeline_with_llm(
     let mut results: Vec<StageResult> = Vec::new();
     let mut artifact_registry: HashMap<String, PathBuf> = HashMap::new();
     let mut started = false;
-    let mut pivot_count: u32 = 0;
+    // Read pivot count from a persistent file so recursive rollback calls
+    // share a global counter (otherwise each recursion resets to 0).
+    let pivot_file = run_dir.join(".pivot_count");
+    let mut pivot_count: u32 = tokio::fs::read_to_string(&pivot_file)
+        .await
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
     let mut stages_skipped: usize = 0;
+
+    // Track which stages have already been targeted by cross-stage rework
+    // to prevent infinite loops (e.g. QualityGate repeatedly sends back to ExperimentCycle).
+    let rework_history_file = run_dir.join(".rework_history");
+    let mut rework_history: std::collections::HashSet<String> =
+        tokio::fs::read_to_string(&rework_history_file)
+            .await
+            .ok()
+            .map(|s| s.lines().map(|l| l.trim().to_owned()).filter(|l| !l.is_empty()).collect())
+            .unwrap_or_default();
 
     // Determine the effective starting stage (may be overridden by checkpoint).
     let effective_from = determine_start_stage(pipeline_config.from_stage, run_dir).await;
@@ -310,6 +327,7 @@ pub async fn execute_pipeline_with_llm(
                         decision: "blocked_blinding".into(),
                         error: Some("Blinding gate: approve unblinding before Phase 4".into()),
                         elapsed_secs: 0.0,
+                        retry_from_stage: None,
                     };
                     results.push(result);
                     break;
@@ -423,7 +441,19 @@ pub async fn execute_pipeline_with_llm(
             }
         }
 
-        // Decision rollback (RESEARCH_DECISION stage only).
+        // Decision handling (RESEARCH_DECISION stage only).
+        if stage == Stage::ResearchDecision && result.status == StageStatus::Done {
+            // "stop" decision: halt the pipeline — research concluded or infeasible
+            if result.decision == "stop" {
+                info!(
+                    "[{}] ResearchDecision: STOP — halting pipeline (research concluded)",
+                    run_id
+                );
+                result.decision = "stop".to_owned();
+                results.push(result);
+                break 'outer;
+            }
+        }
         if stage == Stage::ResearchDecision
             && result.status == StageStatus::Done
             && decision_rollback(&result.decision).is_some()
@@ -431,6 +461,8 @@ pub async fn execute_pipeline_with_llm(
             if pivot_count < MAX_DECISION_PIVOTS {
                 let rollback_target = decision_rollback(&result.decision).unwrap();
                 pivot_count += 1;
+                // Persist so recursive sub-runs see the updated count
+                let _ = tokio::fs::write(&pivot_file, pivot_count.to_string()).await;
                 info!(
                     "[{}] Decision: {} → rollback to {} (attempt {}/{})",
                     run_id,
@@ -459,6 +491,66 @@ pub async fn execute_pipeline_with_llm(
                     "[{}] Max pivot attempts ({}) reached — forcing PROCEED",
                     run_id, MAX_DECISION_PIVOTS
                 );
+            }
+        }
+
+        // Cross-stage rework: reviewer flagged that an earlier stage needs re-running.
+        // Uses the same recursive sub-run pattern as decision_rollback.
+        // Dedup: each target stage can only be reworked once per run to prevent infinite loops.
+        if result.status == StageStatus::Done {
+            if let Some(target) = result.retry_from_stage {
+                let rework_key = format!("{}→{}", stage.name(), target.name());
+                if rework_history.contains(&rework_key) {
+                    warn!(
+                        "[{}] Upstream rework {}→{} already attempted — skipping to prevent loop",
+                        run_id, stage.name(), target.name()
+                    );
+                } else if pivot_count < MAX_DECISION_PIVOTS {
+                    pivot_count += 1;
+                    let _ = tokio::fs::write(&pivot_file, pivot_count.to_string()).await;
+
+                    // Record this rework so it won't be attempted again
+                    rework_history.insert(rework_key);
+                    let history_content: String = rework_history.iter()
+                        .map(|s| format!("{s}\n"))
+                        .collect();
+                    let _ = tokio::fs::write(&rework_history_file, &history_content).await;
+
+                    info!(
+                        "[{}] {} flagged upstream rework → {} (attempt {}/{})",
+                        run_id, stage.name(), target.name(), pivot_count, MAX_DECISION_PIVOTS
+                    );
+
+                    // Copy review findings into a file the upstream stage can read
+                    let stage_dir = run_dir.join(format!("stage-{:02}", stage.as_i32()));
+                    let review_feedback = collect_review_feedback(&stage_dir);
+                    let target_dir = run_dir.join(format!("stage-{:02}", target.as_i32()));
+                    let _ = std::fs::create_dir_all(&target_dir);
+                    let _ = std::fs::write(
+                        target_dir.join("upstream_review_feedback.md"),
+                        &review_feedback,
+                    );
+
+                    results.push(result);
+                    let sub_cfg = PipelineConfig {
+                        from_stage: target,
+                        to_stage: pipeline_config.to_stage,
+                        auto_approve: pipeline_config.auto_approve,
+                        stop_on_gate: pipeline_config.stop_on_gate,
+                        skip_noncritical: pipeline_config.skip_noncritical,
+                        graceful_degradation: pipeline_config.graceful_degradation,
+                    };
+                    let sub_summary = Box::pin(
+                        execute_pipeline_with_llm(config, &sub_cfg, run_dir, run_id, llm.clone())
+                    ).await?;
+                    stages_skipped += sub_summary.stages_skipped;
+                    break 'outer;
+                } else {
+                    warn!(
+                        "[{}] Upstream rework requested by {} but max pivots ({}) reached — continuing",
+                        run_id, stage.name(), MAX_DECISION_PIVOTS
+                    );
+                }
             }
         }
 
@@ -650,11 +742,11 @@ pub async fn check_blinding_gate(
 // execute_iterative_pipeline
 // ---------------------------------------------------------------------------
 
-/// Execute the iterative refinement loop (Stage 15 / `IterativeRefine`).
+/// Execute the iterative refinement loop.
 ///
-/// Runs stages `ExperimentRun` → `IterativeRefine` → `ResultAnalysis` in a
-/// bounded loop, stopping when `ResultAnalysis` produces a `"proceed"`
-/// decision or when `max_iterations` is reached.
+/// Runs stages `ExperimentCycle` → `ResultAnalysis` in a bounded loop,
+/// stopping when `ResultAnalysis` produces a `"proceed"` decision or when
+/// `max_iterations` is reached.
 pub async fn execute_iterative_pipeline(
     config: &MolConfig,
     pipeline_config: &PipelineConfig,
@@ -670,8 +762,7 @@ pub async fn execute_iterative_pipeline(
         .map(Arc::new);
     let contract_overrides = crate::contracts::ContractOverrides::load(&config.knowledge_chain);
     let iterative_stages = [
-        Stage::ExperimentRun,
-        Stage::IterativeRefine,
+        Stage::ExperimentCycle,
         Stage::ResultAnalysis,
     ];
 
@@ -800,6 +891,39 @@ async fn write_pipeline_summary(run_dir: &Path, summary: &PipelineSummary) {
         }
         Err(e) => warn!("failed to serialise pipeline summary: {}", e),
     }
+}
+
+/// Collect review feedback from a stage directory into a single markdown string.
+///
+/// Used when cross-stage rework is triggered: the review findings are copied
+/// to the upstream stage directory so the agent can read them as context.
+fn collect_review_feedback(stage_dir: &Path) -> String {
+    let mut feedback = String::from("# Downstream Review Feedback\n\n");
+    feedback.push_str("The following issues were identified by reviewers and require fixes ");
+    feedback.push_str("in this stage's artifacts before the pipeline can proceed.\n\n");
+
+    let review_files = ["review_comments.md", "critical_review.md", "constructive_review.md",
+                        "quality_report.md", "plot_validation.md", "rendering_review.md"];
+    for name in &review_files {
+        let path = stage_dir.join(name);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            feedback.push_str(&format!("## {name}\n\n{content}\n\n---\n\n"));
+        }
+    }
+
+    // Also include verdict files for structured issues
+    if let Ok(entries) = std::fs::read_dir(stage_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with("_verdict.json") {
+                if let Ok(content) = std::fs::read_to_string(entry.path()) {
+                    feedback.push_str(&format!("## {name}\n\n```json\n{content}\n```\n\n"));
+                }
+            }
+        }
+    }
+
+    feedback
 }
 
 // ---------------------------------------------------------------------------

@@ -51,6 +51,16 @@ GATE STAGE: Your output must be approved before code generation proceeds.
 {{ multichannel }}
 {% endif %}
 
+{% if experiment_design_hints %}
+## Domain-Specific Experiment Design Guidance
+{{ experiment_design_hints }}
+{% endif %}
+
+{% if dependency_graph %}
+## Phase Dependency Graph
+{{ dependency_graph }}
+{% endif %}
+
 {% if advisor_roles %}
 ## Advisory Expert Perspectives
 {{ advisor_roles }}

@@ -12,8 +12,10 @@ overrides:
       - analysis_report
       - figures
       - systematics_table.json
-  ITERATIVE_REFINE:
+  EXPERIMENT_CYCLE:
     expected_outputs:
+      - resource_plan
+      - raw_results
       - refined_results
       - refinement_log
       - experiment_final

@@ -139,6 +139,10 @@ pub struct StageResult {
     pub decision: String,
     /// Wall-clock execution time in seconds.
     pub elapsed_secs: f64,
+    /// When set, signals that the runner should jump back to this stage
+    /// because a reviewer identified issues that can only be fixed upstream.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retry_from_stage: Option<Stage>,
 }
 
 impl StageResult {
@@ -151,6 +155,7 @@ impl StageResult {
             error: None,
             decision: "proceed".to_owned(),
             elapsed_secs: 0.0,
+            retry_from_stage: None,
         }
     }
 
@@ -163,6 +168,7 @@ impl StageResult {
             error: Some(error.into()),
             decision: "retry".to_owned(),
             elapsed_secs: 0.0,
+            retry_from_stage: None,
         }
     }
 }
@@ -239,6 +245,7 @@ impl StageContext {
             ("hypotheses", "hypotheses.md"),
             ("synthesis_report", "synthesis_report.md"),
             ("experiment_plan", "exp_plan.md"),
+            ("exp_plan", "exp_plan.md"),  // alias: templates use {{ exp_plan }}
             ("analysis_report", "analysis_report.md"),
             ("decision_record", "decision_record.md"),
             ("knowledge_summary", "knowledge_summary.md"),
@@ -246,6 +253,7 @@ impl StageContext {
             ("paper_draft", "paper_draft.md"),
             ("paper_revised", "paper_revised.md"),
             ("problem_tree", "problem_tree.md"),
+            ("problem_decompose", "problem_tree.md"),  // alias: templates use {{ problem_decompose }}
             ("search_plan", "search_plan.md"),
             ("knowledge_cards", "knowledge_cards.md"),
             ("sanity_report", "sanity_report.md"),
@@ -253,6 +261,36 @@ impl StageContext {
             ("review_comments", "review_comments.md"),
             ("topic_evaluation", "topic_evaluation.md"),
             ("run_report", "run_report.md"),
+            // Phase 2 agent artifacts (now .md for robustness)
+            ("candidates", "candidates.md"),
+            ("sources", "sources.md"),
+            ("queries", "queries.md"),
+            ("citation_map", "citation_map.md"),
+            // Phase 2 program-generated artifacts (keep .jsonl/.json)
+            ("screened_papers", "screened_papers.jsonl"),
+            ("exclusion_reasons", "exclusion_reasons.json"),
+            // Phase 1 code-driven artifacts
+            ("hardware_profile", "hardware_profile.json"),
+            // Phase 3 additional artifacts
+            ("codebase_context", "codebase_context.json"),
+            ("relevant_files", "relevant_files.json"),
+            ("experiment_spec", "experiment_spec.md"),
+            ("experiment_code", "experiment_code.md"),
+            ("plot_validation", "plot_validation.md"),
+            ("refinement_log", "refinement_log.md"),
+            // Phase 4 additional artifacts
+            ("gap_analysis", "gap_analysis.json"),
+            ("experiment_summary", "experiment_summary.json"),
+            // Phase 5 additional artifacts
+            ("revision_notes", "revision_notes.md"),
+            ("quality_report", "quality_report.md"),
+            ("critical_review", "critical_review.md"),
+            ("constructive_review", "constructive_review.md"),
+            ("rendering_review", "rendering_review.md"),
+            ("verification_report", "verification_report.md"),
+            ("archive_manifest", "archive_manifest.json"),
+            ("paper_final", "paper_final.md"),
+            ("paper_tex", "paper.tex"),
         ];
         for (key, filename) in artifact_files {
             if let Some(content) = read_prior_artifact(&self.run_dir, filename) {
@@ -390,6 +428,22 @@ impl StageContext {
             vars.insert("plotting_standards".into(), c);
         }
 
+        // Phase dependency graph (appendix-dependencies.md)
+        if let Some(c) = self.read_knowledge("methodology/appendix-dependencies.md") {
+            vars.insert("dependency_graph".into(), c);
+        }
+
+        // Domain-specific prompt overlays (prompts/*.md)
+        if let Some(c) = self.read_knowledge("prompts/experiment_design.md") {
+            vars.insert("experiment_design_hints".into(), c);
+        }
+        if let Some(c) = self.read_knowledge("prompts/code_generation.md") {
+            vars.insert("code_generation_hints".into(), c);
+        }
+        if let Some(c) = self.read_knowledge("prompts/result_analysis.md") {
+            vars.insert("result_analysis_hints".into(), c);
+        }
+
         // Domain profile (domain.yaml)
         if let Some(c) = self.read_knowledge("domain.yaml") {
             vars.insert("domain_profile".into(), c);
@@ -435,7 +489,7 @@ pub struct ArtifactSpec {
 /// Generate the `output_spec` template variable content from artifact specs.
 ///
 /// Produces a markdown section telling the agent which files to write.
-fn build_output_spec(specs: &[ArtifactSpec]) -> String {
+pub fn build_output_spec(specs: &[ArtifactSpec]) -> String {
     if specs.is_empty() {
         return String::new();
     }
@@ -459,7 +513,7 @@ fn build_output_spec(specs: &[ArtifactSpec]) -> String {
 ///
 /// Unlike the deleted `strip_llm_preamble`, this is intentionally simple:
 /// just drop leading lines that are clearly meta-commentary.
-fn simple_clean(text: &str) -> String {
+pub fn simple_clean(text: &str) -> String {
     // Strip [thinking]...[/thinking] blocks (LLM thought leakage)
     let mut cleaned = text.to_owned();
     while let Some(start) = cleaned.find("[thinking]") {
@@ -474,9 +528,25 @@ fn simple_clean(text: &str) -> String {
             }
         }
     }
-    // Also strip lines that start with [thinking] (single-line variant)
+    // Strip [plan]...[/plan] blocks (ACP agent task tracking leakage)
+    while let Some(start) = cleaned.find("[plan]") {
+        if let Some(end) = cleaned[start..].find("[/plan]") {
+            cleaned.replace_range(start..start + end + "[/plan]".len(), "");
+        } else {
+            // Unclosed plan block — strip from [plan] to next blank line or end
+            if let Some(blank) = cleaned[start..].find("\n\n") {
+                cleaned.replace_range(start..start + blank, "");
+            } else {
+                cleaned.truncate(start);
+            }
+        }
+    }
+    // Also strip lines that start with [thinking] or [plan] (single-line variants)
     let mut lines: Vec<&str> = cleaned.lines()
-        .filter(|l| !l.trim().starts_with("[thinking]"))
+        .filter(|l| {
+            let t = l.trim();
+            !t.starts_with("[thinking]") && !t.starts_with("[plan]")
+        })
         .collect();
     // Drop leading preamble lines
     while let Some(first) = lines.first() {
@@ -491,6 +561,10 @@ fn simple_clean(text: &str) -> String {
             || t.starts_with("Sure,")
             || t.starts_with("OK,")
             || t.starts_with("Okay,")
+            || t.starts_with("Good.")
+            || t.starts_with("Perfect.")
+            || t.starts_with("Understood.")
+            || t.starts_with("Great.")
         {
             lines.remove(0);
         } else {
@@ -594,6 +668,23 @@ pub async fn execute_agentic(
         }
     }
 
+    // Also discover extra files the agent wrote beyond the declared specs.
+    // This preserves agent initiative — exploratory outputs are registered.
+    if let Ok(entries) = std::fs::read_dir(&stage_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            // Skip directories (runs/, experiment/, etc.) and already-registered files
+            if entry.file_type().map(|t| t.is_file()).unwrap_or(false)
+                && !produced.contains(&name)
+                && !name.starts_with('.')
+                && name != "stage_log.md"
+            {
+                produced.push(name.clone());
+                info!(stage = %stage.name(), artifact = %name, "Extra artifact discovered");
+            }
+        }
+    }
+
     let status = if produced.is_empty() { StageStatus::Failed } else { StageStatus::Done };
     let error = if produced.is_empty() { Some("No artifacts produced".into()) } else { None };
     StageResult {
@@ -603,13 +694,14 @@ pub async fn execute_agentic(
         error,
         decision: "proceed".to_owned(),
         elapsed_secs: 0.0,
+        retry_from_stage: None,
     }
 }
 
 /// Execute a multi-agent stage: primary agent runs first, then each reviewer
 /// runs sequentially reading the primary artifact and producing review files.
 ///
-/// Used for review stages (PEER_REVIEW, QUALITY_GATE, SANITY_CHECK) where
+/// Used for review stages (PEER_REVIEW, QUALITY_GATE) where
 /// multiple expert perspectives add value.
 pub async fn execute_multi_agentic(
     stage: Stage,
@@ -651,7 +743,9 @@ pub async fn execute_multi_agentic(
     for (agent_name, reviewer_specs) in reviewers {
         // Build vars with reviewer's agent role overriding the primary
         let mut vars = ctx.template_vars(stage);
-        vars.insert("output_spec".to_owned(), build_output_spec(reviewer_specs));
+        let mut spec = build_output_spec(reviewer_specs);
+        spec.push_str(&build_verdict_instruction(agent_name));
+        vars.insert("output_spec".to_owned(), spec);
 
         // Override agent_role with reviewer's role
         if let Some(raw) = ctx.read_knowledge(&format!("agents/{agent_name}.md")) {
@@ -757,42 +851,140 @@ pub async fn execute_multi_agentic(
     result
 }
 
-/// Phrases in review artifacts that indicate critical issues requiring rework.
-const REWORK_TRIGGERS: &[&str] = &[
-    "critical",
-    "fail",
+/// Phrase-based fallback triggers — used ONLY when no verdict.json is found.
+/// Prefer the structured verdict approach over these.
+const REWORK_TRIGGERS_FALLBACK: &[&str] = &[
+    "critical issue",
+    "critical flaw",
+    "critical error",
     "must fix",
     "must be fixed",
-    "blocking",
-    "severity: a",
-    "severity a",
+    "blocking issue",
     "not ready",
     "reject",
 ];
 
-/// Check if any reviewer artifact contains critical findings that warrant rework.
+/// Build the verdict instruction appended to reviewer output_spec.
 ///
-/// Reads all review files in `stage_dir`, scans for trigger phrases.
+/// Instructs the reviewer agent to produce a structured `verdict.json` with
+/// its conclusion + reasoning, rather than relying on post-hoc string matching.
+pub fn build_verdict_instruction(reviewer_name: &str) -> String {
+    format!(
+        "\n\n## REQUIRED: Final Verdict\n\n\
+         After completing your review, you MUST write a file `{reviewer_name}_verdict.json` \
+         with your final assessment. This is how the pipeline reads your decision — \
+         do NOT rely on keywords in your prose.\n\n\
+         ```json\n\
+         {{\n\
+         \x20 \"verdict\": \"approve\" or \"rework\",\n\
+         \x20 \"confidence\": \"high\" or \"medium\" or \"low\",\n\
+         \x20 \"summary\": \"One-sentence overall assessment\",\n\
+         \x20 \"critical_issues\": [\n\
+         \x20   {{\"description\": \"...\", \"location\": \"file:line or section\", \"fix_suggestion\": \"...\"}}\n\
+         \x20 ],\n\
+         \x20 \"minor_issues\": [\n\
+         \x20   {{\"description\": \"...\", \"location\": \"...\"}}\n\
+         \x20 ],\n\
+         \x20 \"upstream_rework_stage\": null or \"CODE_DEVELOP\" or \"EXPERIMENT_CYCLE\" or \"PAPER_WRITE\"\n\
+         }}\n\
+         ```\n\n\
+         Rules:\n\
+         - `\"verdict\": \"rework\"` means the work has critical problems that MUST be fixed before proceeding.\n\
+         - `\"verdict\": \"approve\"` means the work is acceptable (minor issues are noted but not blocking).\n\
+         - `critical_issues` array should be empty when verdict is `\"approve\"`.\n\
+         - Be decisive: if in doubt, approve with minor_issues rather than rework.\n\
+         - `upstream_rework_stage`: set this ONLY if the critical issues cannot be fixed at the \
+         current stage and require re-running an earlier stage (e.g. experiment code needs to be \
+         rewritten, or data analysis needs to be redone). Use the stage name exactly as shown above. \
+         Set to null if issues can be addressed at the current stage or in the paper text.\n"
+    )
+}
+
+/// Check if any reviewer produced a verdict requiring rework.
+///
+/// **Primary**: Reads `{reviewer_name}_verdict.json` files from `stage_dir` and
+/// parses the structured verdict. This is the preferred, semantic approach.
+///
+/// **Fallback**: If no verdict JSON is found, falls back to phrase-based scanning
+/// of review text files (legacy behavior, kept for robustness).
+///
 /// Returns a summary of findings if rework is needed, or `None` if clean.
 pub fn check_review_findings(stage_dir: &std::path::Path, review_files: &[&str]) -> Option<String> {
     let mut findings = Vec::new();
+    let mut found_any_verdict = false;
 
-    for filename in review_files {
-        let path = stage_dir.join(filename);
-        let content = match std::fs::read_to_string(&path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let lower = content.to_lowercase();
-        let triggered: Vec<&&str> = REWORK_TRIGGERS.iter()
-            .filter(|t| lower.contains(**t))
-            .collect();
-        if !triggered.is_empty() {
-            findings.push(format!(
-                "**{filename}**: found {} ({})",
-                triggered.len(),
-                triggered.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", ")
-            ));
+    // --- Primary: structured verdict files ---
+    if let Ok(entries) = std::fs::read_dir(stage_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if !name_str.ends_with("_verdict.json") {
+                continue;
+            }
+            let path = entry.path();
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            // Try to extract JSON from possible markdown fences
+            let json_str = strip_markdown_fences(&content);
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                found_any_verdict = true;
+                let verdict = v.get("verdict")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("approve")
+                    .to_lowercase();
+                if verdict == "rework" || verdict == "reject" {
+                    let summary = v.get("summary")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no summary)");
+                    let issues: Vec<String> = v.get("critical_issues")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| arr.iter().filter_map(|item| {
+                            item.get("description").and_then(|d| d.as_str()).map(|s| s.to_string())
+                        }).collect())
+                        .unwrap_or_default();
+                    findings.push(format!(
+                        "**{name_str}** verdict={verdict}: {summary}\n  Critical issues: {}",
+                        if issues.is_empty() { "(none listed)".to_string() }
+                        else { issues.join("; ") }
+                    ));
+                } else {
+                    tracing::info!(
+                        reviewer = %name_str,
+                        verdict = %verdict,
+                        "Reviewer approved"
+                    );
+                }
+            } else {
+                tracing::warn!(
+                    reviewer = %name_str,
+                    "Could not parse verdict JSON — will fall back to phrase matching for this reviewer"
+                );
+            }
+        }
+    }
+
+    // --- Fallback: phrase-based scan (only if no structured verdicts found) ---
+    if !found_any_verdict {
+        tracing::info!("No structured verdict files found — using phrase-based fallback");
+        for filename in review_files {
+            let path = stage_dir.join(filename);
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let lower = content.to_lowercase();
+            let triggered: Vec<&&str> = REWORK_TRIGGERS_FALLBACK.iter()
+                .filter(|t| lower.contains(**t))
+                .collect();
+            if !triggered.is_empty() {
+                findings.push(format!(
+                    "**{filename}** (phrase-match): found {} ({})",
+                    triggered.len(),
+                    triggered.iter().map(|t| format!("`{t}`")).collect::<Vec<_>>().join(", ")
+                ));
+            }
         }
     }
 
@@ -803,11 +995,53 @@ pub fn check_review_findings(stage_dir: &std::path::Path, review_files: &[&str])
     }
 }
 
+/// Scan verdict files in a stage directory for `upstream_rework_stage`.
+///
+/// Returns the earliest upstream stage that any reviewer recommends re-running,
+/// or `None` if all issues can be addressed at the current stage.
+pub fn check_upstream_rework(stage_dir: &std::path::Path) -> Option<Stage> {
+    let entries = std::fs::read_dir(stage_dir).ok()?;
+    let mut earliest: Option<Stage> = None;
+
+    for entry in entries.filter_map(|e| e.ok()) {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !name_str.ends_with("_verdict.json") {
+            continue;
+        }
+        let content = match std::fs::read_to_string(entry.path()) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let json_str = strip_markdown_fences(&content);
+        let v: serde_json::Value = match serde_json::from_str(&json_str) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if let Some(stage_name) = v.get("upstream_rework_stage").and_then(|v| v.as_str()) {
+            if let Ok(target) = Stage::from_name(stage_name) {
+                match earliest {
+                    None => earliest = Some(target),
+                    Some(current) if target < current => earliest = Some(target),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    earliest
+}
+
 /// Multi-agent execution with review-driven rework loop.
 ///
 /// Runs `execute_multi_agentic()`, then checks reviewer artifacts for critical
 /// findings. If found, feeds findings back to the primary agent to fix, then
 /// re-runs the full review cycle. Bounded by `max_rework` iterations.
+///
+/// NOTE: Currently unused — PeerReview and QualityGate switched to plain
+/// `execute_multi_agentic()` because their rework loops were review-of-review
+/// (not review-of-work). Retained for future cross-stage rework implementation.
+#[allow(dead_code)]
 pub async fn execute_multi_agentic_with_rework(
     stage: Stage,
     ctx: &StageContext,
@@ -962,7 +1196,7 @@ fn extract_phase_section(text: &str, phase_num: u8) -> String {
 
 /// Strip YAML frontmatter (delimited by `---`) from a markdown document.
 /// Returns the content after the closing `---` delimiter.
-fn strip_frontmatter(text: &str) -> &str {
+pub fn strip_frontmatter(text: &str) -> &str {
     if !text.starts_with("---") {
         return text;
     }
@@ -1036,6 +1270,26 @@ pub fn strip_markdown_fences(s: &str) -> String {
     trimmed.to_string()
 }
 
+/// Strip `<thinking>...</thinking>` blocks from LLM responses.
+///
+/// Some models emit internal reasoning wrapped in thinking tags. These should
+/// not leak into user-facing artifacts.
+pub fn strip_thinking_blocks(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(start) = rest.find("<thinking>") {
+        result.push_str(&rest[..start]);
+        if let Some(end) = rest[start..].find("</thinking>") {
+            rest = &rest[start + end + "</thinking>".len()..];
+        } else {
+            // Unclosed tag — strip everything from <thinking> onward
+            return result;
+        }
+    }
+    result.push_str(rest);
+    result
+}
+
 // ---------------------------------------------------------------------------
 // Context options for build_context_preamble
 // ---------------------------------------------------------------------------
@@ -1081,13 +1335,19 @@ fn read_prior_artifact(run_dir: &Path, filename: &str) -> Option<String> {
     if let Some(content) = read_prior_artifact_exact(run_dir, filename) {
         return Some(content);
     }
-    // Backward compat: if looking for .md, try .json and .yaml
-    if filename.ends_with(".md") {
-        let stem = filename.trim_end_matches(".md");
-        for ext in &[".json", ".yaml", ".yml", ".jsonl"] {
-            let old_name = format!("{stem}{ext}");
-            if let Some(content) = read_prior_artifact_exact(run_dir, &old_name) {
-                return Some(content);
+    // Cross-format fallback: agents may write .md when .json was expected or vice versa.
+    // Try all common extensions for the same stem.
+    let extensions = &[".md", ".json", ".yaml", ".yml", ".jsonl"];
+    let stem = extensions.iter()
+        .find(|ext| filename.ends_with(**ext))
+        .map(|ext| filename.trim_end_matches(*ext));
+    if let Some(stem) = stem {
+        for ext in extensions {
+            let alt_name = format!("{stem}{ext}");
+            if alt_name != filename {
+                if let Some(content) = read_prior_artifact_exact(run_dir, &alt_name) {
+                    return Some(content);
+                }
             }
         }
     }
@@ -1854,11 +2114,8 @@ pub async fn execute_stage(stage: Stage, context: &StageContext) -> Result<Stage
         }
 
         // Phase 2: Exploration ---------------------------------------------
-        Stage::SearchStrategy => {
-            stages_impl::phase2::execute_search_strategy(stage, context).await
-        }
-        Stage::LiteratureCollect => {
-            stages_impl::phase2::execute_literature_collect(stage, context).await
+        Stage::LiteratureSearch => {
+            stages_impl::phase2::execute_literature_search(stage, context).await
         }
         Stage::LiteratureScreen => {
             stages_impl::phase2::execute_literature_screen(stage, context).await
@@ -1866,34 +2123,22 @@ pub async fn execute_stage(stage: Stage, context: &StageContext) -> Result<Stage
         Stage::KnowledgeExtract => {
             stages_impl::phase2::execute_knowledge_extract(stage, context).await
         }
-        Stage::Synthesis => {
-            stages_impl::phase2::execute_synthesis(stage, context).await
-        }
-        Stage::HypothesisGen => {
-            stages_impl::phase2::execute_hypothesis_gen(stage, context).await
+        Stage::SynthesisHypotheses => {
+            stages_impl::phase2::execute_synthesis_hypotheses(stage, context).await
         }
 
-        // Phase 3: Processing ----------------------------------------------
+        // Phase 3: Execution -----------------------------------------------
         Stage::ExperimentDesign => {
             stages_impl::phase3::execute_experiment_design(stage, context).await
         }
         Stage::CodebaseSearch => {
             stages_impl::phase3::execute_codebase_search(stage, context).await
         }
-        Stage::CodeGeneration => {
-            stages_impl::phase3::execute_code_generation(stage, context).await
+        Stage::CodeDevelop => {
+            stages_impl::phase3::execute_code_develop(stage, context).await
         }
-        Stage::SanityCheck => {
-            stages_impl::phase3::execute_sanity_check(stage, context).await
-        }
-        Stage::ResourcePlanning => {
-            stages_impl::phase3::execute_resource_planning(stage, context).await
-        }
-        Stage::ExperimentRun => {
-            stages_impl::phase3::execute_experiment_run(stage, context).await
-        }
-        Stage::IterativeRefine => {
-            stages_impl::phase3::execute_iterative_refine(stage, context).await
+        Stage::ExperimentCycle => {
+            stages_impl::phase3::execute_experiment_cycle(stage, context).await
         }
 
         // Phase 4: Inference -----------------------------------------------
@@ -1911,26 +2156,17 @@ pub async fn execute_stage(stage: Stage, context: &StageContext) -> Result<Stage
         Stage::PaperOutline => {
             stages_impl::phase5::execute_paper_outline(stage, context).await
         }
-        Stage::PaperDraft => {
-            stages_impl::phase5::execute_paper_draft(stage, context).await
+        Stage::PaperWrite => {
+            stages_impl::phase5::execute_paper_write(stage, context).await
         }
         Stage::PeerReview => {
             stages_impl::phase5::execute_peer_review(stage, context).await
         }
-        Stage::PaperRevision => {
-            stages_impl::phase5::execute_paper_revision(stage, context).await
-        }
         Stage::QualityGate => {
             stages_impl::phase5::execute_quality_gate(stage, context).await
         }
-        Stage::KnowledgeArchive => {
-            stages_impl::phase5::execute_knowledge_archive(stage, context).await
-        }
-        Stage::ExportPublish => {
-            stages_impl::phase5::execute_export_publish(stage, context).await
-        }
-        Stage::CitationVerify => {
-            stages_impl::phase5::execute_citation_verify(stage, context).await
+        Stage::Publish => {
+            stages_impl::phase5::execute_publish(stage, context).await
         }
 
         // Special ----------------------------------------------------------
@@ -1996,7 +2232,7 @@ mod tests {
     async fn execute_sanity_check_fails_without_engine() {
         let dir = TempDir::new().unwrap();
         let ctx = make_context(dir.path());
-        let result = execute_stage(Stage::SanityCheck, &ctx).await.unwrap();
+        let result = execute_stage(Stage::CodeDevelop, &ctx).await.unwrap();
         assert_eq!(result.status, StageStatus::Failed);
     }
 

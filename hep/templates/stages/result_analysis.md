@@ -49,6 +49,11 @@ uncertainty decomposition. You produce publication-quality result tables and fig
 {{ multichannel }}
 {% endif %}
 
+{% if result_analysis_hints %}
+## Domain-Specific Result Analysis Guidance
+{{ result_analysis_hints }}
+{% endif %}
+
 {% if advisor_roles %}
 ## Advisory Expert Perspectives
 {{ advisor_roles }}

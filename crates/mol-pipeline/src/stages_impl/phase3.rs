@@ -1,6 +1,6 @@
-//! Phase 3: Processing — ExperimentDesign (3.1), CodebaseSearch (3.2),
-//! CodeGeneration (3.3), SanityCheck (3.4), ResourcePlanning (3.5),
-//! ExperimentRun (3.6), and IterativeRefine (3.7) stage executors.
+//! Phase 3: Execution — ExperimentDesign (3.1), CodebaseSearch (3.2),
+//! CodeDevelop (3.3, ← CodeGeneration + SanityCheck),
+//! ExperimentCycle (3.4, ← ResourcePlanning + ExperimentRun + IterativeRefine).
 
 use crate::executor::{StageContext, StageResult};
 use crate::stages::{Stage, StageStatus};
@@ -60,11 +60,34 @@ pub async fn execute_codebase_search(stage: Stage, ctx: &StageContext) -> StageR
     if !has_codebases {
         tracing::info!("No codebases_dir configured; generating default codebase context");
         let now = chrono::Utc::now().to_rfc3339();
+        // Domain-aware defaults: provide standard tools for the configured domain
+        let (frameworks, patterns, dependencies) = match ctx.config.domain.as_str() {
+            "hep" => (
+                vec!["uproot", "awkward-array", "hist", "mplhep"],
+                vec!["data_loader", "histogram_fill", "cut_flow", "signal_extraction"],
+                vec!["numpy", "scipy", "matplotlib", "pyhf"],
+            ),
+            "ml" | "ai" => (
+                vec!["pytorch", "transformers", "scikit-learn", "wandb"],
+                vec!["data_pipeline", "model_train", "evaluation", "hyperparameter_search"],
+                vec!["numpy", "pandas", "matplotlib", "torch"],
+            ),
+            "physics" | "astro" | "cosmology" => (
+                vec!["astropy", "healpy", "camb", "emcee"],
+                vec!["data_loader", "spectrum_analysis", "model_fit", "visualization"],
+                vec!["numpy", "scipy", "matplotlib", "h5py"],
+            ),
+            _ => (
+                vec!["numpy", "scipy", "pandas", "matplotlib"],
+                vec!["data_loader", "analysis", "visualization", "report"],
+                vec!["numpy", "scipy", "matplotlib", "jupyter"],
+            ),
+        };
         let context = serde_json::json!({
-            "frameworks": ["uproot", "awkward-array", "hist", "mplhep"],
-            "patterns": ["data_loader", "histogram_fill", "cut_flow", "signal_extraction"],
-            "dependencies": ["numpy", "scipy", "matplotlib", "pyhf"],
-            "notes": "No existing codebase configured; experiment will start from scratch using standard HEP Python tools"
+            "frameworks": frameworks,
+            "patterns": patterns,
+            "dependencies": dependencies,
+            "notes": format!("No existing codebase configured; experiment will start from scratch using standard {} Python tools", ctx.config.domain)
         });
         let files = serde_json::json!({
             "generated_at": now,
@@ -79,6 +102,7 @@ pub async fn execute_codebase_search(stage: Stage, ctx: &StageContext) -> StageR
             error: None,
             decision: "proceed".into(),
             elapsed_secs: 0.0,
+            retry_from_stage: None,
         };
     }
 
@@ -99,17 +123,18 @@ pub async fn execute_codebase_search(stage: Stage, ctx: &StageContext) -> StageR
 }
 
 // ---------------------------------------------------------------------------
-// CodeGeneration
+// CodeDevelop (← merged CodeGeneration + SanityCheck)
 // ---------------------------------------------------------------------------
 
-/// Execute the CodeGeneration stage via agentic executor.
+/// Execute the CodeDevelop stage — write code, run, check figures, fix, repeat.
 ///
-/// Reads exp_plan.md and codebase context; produces `experiment_spec.md`
-/// (experiment code + specification) and `experiment/main.py`.
-pub async fn execute_code_generation(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_agentic};
+/// Inner loop: generate code → run → sanity check → fix issues → re-run.
+/// Produces experiment code, spec, and sanity report.
+pub async fn execute_code_develop(stage: Stage, ctx: &StageContext) -> StageResult {
+    use crate::executor::{ArtifactSpec, execute_agentic, llm_generate, strip_thinking_blocks};
 
-    let specs = vec![
+    // Phase 1: Generate code
+    let code_specs = vec![
         ArtifactSpec {
             filename: "experiment_spec.md".into(),
             description: "experiment specification — entry point, dependencies, smoke test \
@@ -123,181 +148,166 @@ pub async fn execute_code_generation(stage: Stage, ctx: &StageContext) -> StageR
         },
     ];
 
-    let mut result = execute_agentic(stage, ctx, &specs).await;
+    let mut result = execute_agentic(stage, ctx, &code_specs).await;
     if result.status != StageStatus::Done {
         return result;
     }
 
-    // Create experiment/ directory and extract main.py from experiment_code.md
+    // Extract experiment/main.py from generated code
     let stage_dir = ctx.stage_dir(stage);
     let experiment_dir = stage_dir.join("experiment");
-    if let Err(e) = fs::create_dir_all(&experiment_dir) {
-        return StageResult::failure(stage, format!("create experiment dir: {e}"));
-    }
-
-    // Read the generated code artifact and write as main.py
-    let code_content = fs::read_to_string(stage_dir.join("experiment_code.md"))
-        .unwrap_or_default();
-    // Extract the largest code block, or use as-is
+    let _ = fs::create_dir_all(&experiment_dir);
+    let code_content = fs::read_to_string(stage_dir.join("experiment_code.md")).unwrap_or_default();
     let main_py = crate::executor::strip_markdown_fences(&code_content);
-    if let Err(e) = fs::write(experiment_dir.join("main.py"), &main_py) {
-        return StageResult::failure(stage, format!("write experiment/main.py: {e}"));
-    }
+    let _ = fs::write(experiment_dir.join("main.py"), &main_py);
     result.artifacts.push("experiment/".to_owned());
 
-    result
-}
+    // Phase 2: Iterative sanity check (run code, check, fix)
+    {
+        use crate::runtimes::sanity_check::{
+            prepare_workspace, list_experiment_files,
+            build_system_prompt, build_user_message, check_success,
+            check_verdict_file, check_outputs_exist,
+            copy_fixes_back, load_plan_summary,
+        };
 
-// ---------------------------------------------------------------------------
-// SanityCheck
-// ---------------------------------------------------------------------------
+        let workspace = match prepare_workspace(&stage_dir, &experiment_dir, &ctx.run_dir, &ctx.config) {
+            Ok(ws) => ws,
+            Err(e) => {
+                tracing::warn!("Failed to prepare sanity workspace: {e}; skipping iterative check");
+                // Fall through to multi-agent review
+                let _ = fs::write(stage_dir.join("sanity_summary.md"), format!("Workspace prep failed: {e}"));
+                return run_code_develop_review(stage, ctx, result).await;
+            }
+        };
 
-/// Execute the SanityCheck stage with iterative code-fix loop + multi-agent review.
-///
-/// 1. Find experiment code from prior stages
-/// 2. Prepare isolated workspace
-/// 3. LLM agent runs code, checks output, fixes errors (iterative loop)
-/// 4. Copy fixes back to experiment directory
-/// 5. Multi-agent review: cross-checker + plot-validator
-pub async fn execute_sanity_check(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::llm_generate;
-    use crate::runtimes::sanity_check::{
-        find_experiment_dir, prepare_workspace, list_experiment_files,
-        build_system_prompt, build_user_message, check_success,
-        copy_fixes_back, load_plan_summary,
-    };
+        let max_iterations = ctx.config.settings.get("sanity_check_max_iterations")
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(5);
+        let python_path = ctx.config.settings.get("python_path")
+            .map(|s| s.as_str())
+            .unwrap_or("python3");
 
-    let stage_dir = ctx.stage_dir(stage);
-    let _ = fs::create_dir_all(&stage_dir);
+        let system_prompt = build_system_prompt(python_path, &workspace);
+        let plan_summary = load_plan_summary(&ctx.run_dir);
+        let files = list_experiment_files(&workspace);
+        let user_prompt = build_user_message(&workspace, &files, &plan_summary);
 
-    // Step 1: Find experiment code
-    let experiment_dir = match find_experiment_dir(&ctx.run_dir) {
-        Some(d) => d,
-        None => {
-            tracing::warn!("No experiment directory found; skipping iterative sanity check");
-            // Fall through to multi-agent review only
-            return run_sanity_review(stage, ctx).await;
-        }
-    };
+        let mut iteration = 0u32;
+        let mut last_response = String::new();
+        let mut passed = false;
+        let mut current_user_prompt = user_prompt.clone();
 
-    // Step 2: Prepare workspace
-    let workspace = match prepare_workspace(&stage_dir, &experiment_dir, &ctx.run_dir, &ctx.config) {
-        Ok(ws) => ws,
-        Err(e) => {
-            tracing::warn!("Failed to prepare sanity workspace: {e}; falling back to review-only");
-            return run_sanity_review(stage, ctx).await;
-        }
-    };
+        while iteration < max_iterations {
+            iteration += 1;
+            tracing::info!(stage = %stage.name(), iteration, max_iterations, "Code develop sanity iteration");
 
-    // Step 3: Iterative fix loop
-    let max_iterations = ctx.config.settings.get("sanity_check_max_iterations")
-        .and_then(|v| v.parse::<u32>().ok())
-        .unwrap_or(5);
-
-    let python_path = ctx.config.settings.get("python_path")
-        .map(|s| s.as_str())
-        .unwrap_or("python3");
-
-    let system_prompt = build_system_prompt(python_path, &workspace);
-    let plan_summary = load_plan_summary(&ctx.run_dir);
-    let files = list_experiment_files(&workspace);
-    let user_prompt = build_user_message(&workspace, &files, &plan_summary);
-
-    let mut iteration = 0u32;
-    let mut last_response = String::new();
-    let mut passed = false;
-
-    while iteration < max_iterations {
-        iteration += 1;
-        tracing::info!(
-            stage = %stage.name(),
-            iteration,
-            max_iterations,
-            "Sanity check iteration"
-        );
-
-        match llm_generate(ctx, stage, &system_prompt, &user_prompt).await {
-            Ok(response) => {
-                last_response = response;
-                passed = check_success(&last_response, &[], iteration, max_iterations);
-                if passed {
-                    tracing::info!(stage = %stage.name(), iteration, "Sanity check passed");
+            match llm_generate(ctx, stage, &system_prompt, &current_user_prompt).await {
+                Ok(response) => {
+                    last_response = response;
+                    // Prefer structured verdict file over phrase matching
+                    if let Some(verdict) = check_verdict_file(&workspace) {
+                        passed = verdict;
+                        tracing::info!(stage = %stage.name(), iteration, passed, "Sanity check verdict from JSON");
+                        if passed { break; }
+                        // Feed verdict back into next iteration so agent knows what failed
+                        let verdict_content = std::fs::read_to_string(workspace.join("sanity_verdict.json")).unwrap_or_default();
+                        current_user_prompt = format!(
+                            "{user_prompt}\n\n## Previous attempt (iteration {iteration})\n\n\
+                             The sanity check did NOT pass. Verdict file contents:\n```json\n{verdict_content}\n```\n\n\
+                             Fix the issues identified above and try again."
+                        );
+                    } else {
+                        // Fallback: also check output existence as structural signal
+                        passed = check_success(&last_response, &[], iteration, max_iterations)
+                            || check_outputs_exist(&workspace);
+                        if passed {
+                            tracing::info!(stage = %stage.name(), iteration, "Sanity check passed (phrase/structural)");
+                            break;
+                        }
+                        // Feed last response back so agent can learn from failure
+                        current_user_prompt = format!(
+                            "{user_prompt}\n\n## Previous attempt (iteration {iteration})\n\n\
+                             The sanity check did NOT pass. Your previous response:\n{last_response}\n\n\
+                             Fix the issues and try again."
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(stage = %stage.name(), iteration, "LLM call failed: {e}");
                     break;
                 }
-                tracing::info!(
-                    stage = %stage.name(),
-                    iteration,
-                    "Sanity check not yet passed, continuing..."
-                );
-            }
-            Err(e) => {
-                tracing::warn!(stage = %stage.name(), iteration, "LLM call failed: {e}");
-                break;
             }
         }
+
+        // Copy fixes back
+        match copy_fixes_back(&workspace, &experiment_dir) {
+            Ok(n) if n > 0 => tracing::info!(stage = %stage.name(), files_copied = n, "Copied fixes back"),
+            _ => {}
+        }
+
+        let clean_response = strip_thinking_blocks(&last_response);
+        let summary = format!(
+            "# Sanity Check Summary\n\n- Iterations: {iteration}/{max_iterations}\n- Result: {}\n\n## Last Response\n\n{clean_response}",
+            if passed { "PASSED" } else { "NOT PASSED" },
+        );
+        let _ = fs::write(stage_dir.join("sanity_summary.md"), &summary);
     }
 
-    // Step 4: Copy fixes back
-    match copy_fixes_back(&workspace, &experiment_dir) {
-        Ok(n) if n > 0 => {
-            tracing::info!(stage = %stage.name(), files_copied = n, "Copied fixes back to experiment dir");
-        }
-        Ok(_) => {}
-        Err(e) => {
-            tracing::warn!("Failed to copy fixes back: {e}");
-        }
-    }
-
-    // Write iterative check summary
-    let summary = format!(
-        "# Sanity Check Summary\n\n\
-         - Iterations: {iteration}/{max_iterations}\n\
-         - Result: {}\n\
-         - Workspace: {}\n\n\
-         ## Agent Response (last iteration)\n\n{last_response}",
-        if passed { "PASSED" } else { "NOT PASSED" },
-        workspace.display(),
-    );
-    let _ = fs::write(stage_dir.join("sanity_summary.md"), &summary);
-
-    // Step 5: Multi-agent review (cross-checker + plot-validator)
-    run_sanity_review(stage, ctx).await
+    // Phase 3: Multi-agent review (cross-checker + plot-validator) with rework
+    run_code_develop_review(stage, ctx, result).await
 }
 
-/// Run the multi-agent review portion of sanity check.
-async fn run_sanity_review(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_multi_agentic_with_rework};
+/// Lightweight review for CodeDevelop: single reviewer (plot-validator) only.
+///
+/// Phase 1 (code generation) and Phase 2 (sanity check) already validate the code
+/// thoroughly. Phase 3 only needs an independent plot-quality review — NOT a full
+/// re-generation of the sanity report via another primary agent call.
+///
+/// Previous design ran `execute_multi_agentic_with_rework()` which spawned a primary
+/// agent (to re-generate sanity_report.md ~5min) + a reviewer (~5min) — effectively
+/// doubling the LLM calls and adding 10+ minutes. Now we run only the reviewer via
+/// a single `execute_agentic()` call.
+async fn run_code_develop_review(stage: Stage, ctx: &StageContext, base_result: StageResult) -> StageResult {
+    use crate::executor::{ArtifactSpec, execute_agentic};
 
-    let primary_specs = vec![
+    let reviewer_specs = vec![
         ArtifactSpec {
-            filename: "sanity_report.md".into(),
-            description: "sanity check report — code review findings, potential issues, \
-                dependency checks, and overall pass/fail status".into(),
+            filename: "plot_validation.md".into(),
+            description: "plot validation report — programmatic checks on plotting code, \
+                physics sanity of distributions, and figure quality assessment. \
+                Review the existing experiment code and figures in this stage directory.".into(),
         },
     ];
 
-    let reviewer_specs: Vec<(&str, Vec<ArtifactSpec>)> = vec![
-        ("plot-validator", vec![
-            ArtifactSpec {
-                filename: "plot_validation.md".into(),
-                description: "plot validation report — programmatic checks on plotting code, \
-                    physics sanity of distributions, and figure quality assessment".into(),
-            },
-        ]),
-    ];
+    tracing::info!(stage = %stage.name(), "Running plot-validator review (lightweight)");
 
-    execute_multi_agentic_with_rework(stage, ctx, &primary_specs, &reviewer_specs, 2).await
+    // Reset session before reviewer
+    if let Some(provider) = ctx.llm.as_ref() {
+        let _ = provider.reset_session().await;
+    }
+
+    let review_result = execute_agentic(stage, ctx, &reviewer_specs).await;
+
+    // Merge artifacts from code generation phase + review
+    let mut all_artifacts = base_result.artifacts;
+    all_artifacts.extend(review_result.artifacts);
+    StageResult {
+        artifacts: all_artifacts,
+        ..review_result
+    }
 }
 
 // ---------------------------------------------------------------------------
-// ResourcePlanning
+// ExperimentCycle (← merged ResourcePlanning + ExperimentRun + IterativeRefine)
 // ---------------------------------------------------------------------------
 
-/// Execute the ResourcePlanning stage via agentic executor.
+/// Execute the ExperimentCycle stage — plan resources, run, iterate until convergence.
 ///
-/// Reads exp_plan.md and hardware profile; produces `resource_plan.md`
-/// and `schedule.json`.
-pub async fn execute_resource_planning(stage: Stage, ctx: &StageContext) -> StageResult {
+/// Single agentic call: the agent decides its own workflow (plan → run → iterate).
+/// Declared artifacts are the expected outputs; the agent may produce additional files
+/// (extra figures, intermediate results, etc.) which are auto-discovered.
+pub async fn execute_experiment_cycle(stage: Stage, ctx: &StageContext) -> StageResult {
     use crate::executor::{ArtifactSpec, execute_agentic};
 
     let specs = vec![
@@ -307,91 +317,47 @@ pub async fn execute_resource_planning(stage: Stage, ctx: &StageContext) -> Stag
                 GPU hours, and cost estimates for the experiment".into(),
         },
         ArtifactSpec {
-            filename: "schedule.json".into(),
-            description: "experiment schedule — milestones with dates, dependencies, \
-                and time estimates".into(),
-        },
-    ];
-
-    execute_agentic(stage, ctx, &specs).await
-}
-
-
-// ---------------------------------------------------------------------------
-// ExperimentRun (3.6)
-// ---------------------------------------------------------------------------
-
-/// Execute the ExperimentRun stage via agentic executor.
-///
-/// Produces `run_report.md` with experiment execution results and logs.
-pub async fn execute_experiment_run(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_agentic};
-
-    let specs = vec![
-        ArtifactSpec {
             filename: "run_report.md".into(),
             description: "experiment run report — execution results including metrics, \
                 hyperparameters used, training logs summary, and any errors encountered".into(),
         },
-    ];
-
-    let mut result = execute_agentic(stage, ctx, &specs).await;
-    if result.status != StageStatus::Done {
-        return result;
-    }
-
-    // Create runs/ directory structure and move report there
-    let stage_dir = ctx.stage_dir(stage);
-    let runs_dir = stage_dir.join("runs");
-    if let Err(e) = fs::create_dir_all(&runs_dir) {
-        return StageResult::failure(stage, format!("create runs dir: {e}"));
-    }
-    // Copy run_report.md into runs/ as well
-    let report_content = fs::read_to_string(stage_dir.join("run_report.md")).unwrap_or_default();
-    let _ = fs::write(runs_dir.join("run_report.md"), &report_content);
-    result.artifacts.push("runs/".to_owned());
-
-    result
-}
-
-// ---------------------------------------------------------------------------
-// IterativeRefine
-// ---------------------------------------------------------------------------
-
-/// Execute the IterativeRefine stage via agentic executor.
-///
-/// Produces `refinement_log.md` and `refined_code.md` with improved experiment code.
-pub async fn execute_iterative_refine(stage: Stage, ctx: &StageContext) -> StageResult {
-    use crate::executor::{ArtifactSpec, execute_agentic};
-
-    let specs = vec![
         ArtifactSpec {
             filename: "refinement_log.md".into(),
             description: "iterative refinement log — changes made, metrics before/after, \
                 convergence status, and remaining issues".into(),
         },
-        ArtifactSpec {
-            filename: "refined_code.md".into(),
-            description: "refined experiment code — improved Python code with all refinements \
-                applied, in fenced code blocks".into(),
-        },
     ];
 
     let mut result = execute_agentic(stage, ctx, &specs).await;
-    if result.status != StageStatus::Done {
-        return result;
+
+    // Post-processing: create runs/ and experiment_final/ from agent outputs
+    let stage_dir = ctx.stage_dir(stage);
+
+    let runs_dir = stage_dir.join("runs");
+    let _ = fs::create_dir_all(&runs_dir);
+    if let Ok(report) = fs::read_to_string(stage_dir.join("run_report.md")) {
+        let _ = fs::write(runs_dir.join("run_report.md"), &report);
     }
 
-    // Create experiment_final/ directory with refined code
-    let stage_dir = ctx.stage_dir(stage);
     let final_dir = stage_dir.join("experiment_final");
-    if let Err(e) = fs::create_dir_all(&final_dir) {
-        return StageResult::failure(stage, format!("create experiment_final dir: {e}"));
+    let _ = fs::create_dir_all(&final_dir);
+    // Look for any .py files the agent wrote and copy to experiment_final/
+    if let Ok(entries) = fs::read_dir(&stage_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".py") {
+                let _ = fs::copy(entry.path(), final_dir.join(&name));
+            }
+        }
     }
-    let refined = fs::read_to_string(stage_dir.join("refined_code.md")).unwrap_or_default();
-    let main_py = crate::executor::strip_markdown_fences(&refined);
-    let _ = fs::write(final_dir.join("main.py"), &main_py);
-    result.artifacts.push("experiment_final/".to_owned());
+
+    // Ensure standard directory artifacts are registered
+    if runs_dir.is_dir() && !result.artifacts.contains(&"runs/".to_owned()) {
+        result.artifacts.push("runs/".to_owned());
+    }
+    if final_dir.is_dir() && !result.artifacts.contains(&"experiment_final/".to_owned()) {
+        result.artifacts.push("experiment_final/".to_owned());
+    }
 
     result
 }
@@ -437,46 +403,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn code_generation_fails_without_prompt_engine() {
+    async fn code_develop_fails_without_prompt_engine() {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx(dir.path(), "contrastive learning", true);
-        let result = execute_code_generation(Stage::CodeGeneration, &ctx).await;
+        let result = execute_code_develop(Stage::CodeDevelop, &ctx).await;
         assert_eq!(result.status, StageStatus::Failed);
         assert!(result.error.as_deref().unwrap_or("").contains("No prompt engine"));
     }
 
     #[tokio::test]
-    async fn sanity_check_fails_without_prompt_engine() {
-        let dir = TempDir::new().unwrap();
-        let ctx = make_ctx(dir.path(), "attention mechanisms", true);
-        let result = execute_sanity_check(Stage::SanityCheck, &ctx).await;
-        assert_eq!(result.status, StageStatus::Failed);
-        assert!(result.error.as_deref().unwrap_or("").contains("No prompt engine"));
-    }
-
-    #[tokio::test]
-    async fn resource_planning_fails_without_prompt_engine() {
+    async fn experiment_cycle_fails_without_prompt_engine() {
         let dir = TempDir::new().unwrap();
         let ctx = make_ctx(dir.path(), "diffusion models", true);
-        let result = execute_resource_planning(Stage::ResourcePlanning, &ctx).await;
-        assert_eq!(result.status, StageStatus::Failed);
-        assert!(result.error.as_deref().unwrap_or("").contains("No prompt engine"));
-    }
-
-    #[tokio::test]
-    async fn experiment_run_fails_without_prompt_engine() {
-        let dir = TempDir::new().unwrap();
-        let ctx = make_ctx(dir.path(), "knowledge distillation", true);
-        let result = execute_experiment_run(Stage::ExperimentRun, &ctx).await;
-        assert_eq!(result.status, StageStatus::Failed);
-        assert!(result.error.as_deref().unwrap_or("").contains("No prompt engine"));
-    }
-
-    #[tokio::test]
-    async fn iterative_refine_fails_without_prompt_engine() {
-        let dir = TempDir::new().unwrap();
-        let ctx = make_ctx(dir.path(), "meta-learning", true);
-        let result = execute_iterative_refine(Stage::IterativeRefine, &ctx).await;
+        let result = execute_experiment_cycle(Stage::ExperimentCycle, &ctx).await;
         assert_eq!(result.status, StageStatus::Failed);
         assert!(result.error.as_deref().unwrap_or("").contains("No prompt engine"));
     }

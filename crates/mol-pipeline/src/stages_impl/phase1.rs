@@ -39,7 +39,7 @@ pub async fn execute_topic_init(stage: Stage, ctx: &StageContext) -> StageResult
         "os": std::env::consts::OS,
         "gpu": detect_gpu(),
         "memory_gb": detect_memory_gb(),
-        "notes": "Hardware profile generated at TopicInit. Actual GPU availability checked at ExperimentRun."
+        "notes": "Hardware profile generated at TopicInit. Actual GPU availability checked at ExperimentCycle."
     });
     if let Err(e) = fs::write(
         stage_dir.join("hardware_profile.json"),

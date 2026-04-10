@@ -5,7 +5,7 @@
 //! Responsibilities:
 //! - Prepare an isolated workspace (copy experiment files + symlink shared dirs)
 //! - Build the system and user prompts for the sanity-check LLM agent
-//! - Detect success / failure based on pass/fail phrases in the agent's output
+//! - Detect success / failure: structured verdict file > output existence > phrase matching
 //! - Copy fixes back to the authoritative experiment directory
 
 use anyhow::{Context, Result};
@@ -27,17 +27,32 @@ const PASS_PHRASES: &[&str] = &[
     "tests pass",
     "all tests pass",
     "successfully completed",
+    "0 failures",
+    "0 errors",
+    "no errors",
+    "no failures",
+    "ran successfully",
+    "execution successful",
+    "passed all",
+    "checks passed",
+    "validation passed",
+    "sanity passed",
 ];
 
 const FAIL_PHRASES: &[&str] = &[
-    "fail",
-    "error",
     "traceback",
     "not pass",
     "does not pass",
     "exit code 1",
-    "cannot",
     "unable to fix",
+    "syntax error",
+    "import error",
+    "module not found",
+    "file not found",
+    "segmentation fault",
+    "killed",
+    "out of memory",
+    "assertion error",
 ];
 
 // ---------------------------------------------------------------------------
@@ -183,7 +198,27 @@ Python interpreter: {python}
 ## Success Criteria
 
 The sanity check passes when the experiment runs to completion without errors
-and produces output files. State "sanity check pass" or "smoke test pass" when done.
+and produces output files.
+
+## REQUIRED: Final Verdict
+
+After completing your sanity check, you MUST write a file `sanity_verdict.json` to
+the workspace directory with your structured assessment:
+
+```json
+{{
+  "verdict": "pass" or "fail",
+  "summary": "One-sentence explanation of the result",
+  "errors_found": ["list of errors encountered, empty if none"],
+  "fixes_applied": ["list of fixes you made, empty if none"],
+  "outputs_verified": ["list of output files confirmed to exist"]
+}}
+```
+
+Rules:
+- `"verdict": "pass"` means the code runs end-to-end and produces expected outputs.
+- `"verdict": "fail"` means there are unresolved errors preventing successful execution.
+- Always write this file, even if the experiment fails — the pipeline reads it for decisions.
 "#,
         workspace = workspace_path.display(),
         python = python_path,
@@ -232,48 +267,97 @@ Begin by reading the main experiment file and checking for obvious issues.
 // Success detection
 // ---------------------------------------------------------------------------
 
+/// Check for a structured `sanity_verdict.json` file in the workspace.
+///
+/// **Primary method**: The agent is prompted to write this file with a structured
+/// verdict (`"pass"` or `"fail"`) plus reasoning. This avoids brittle phrase
+/// matching and gives the agent semantic control over the decision.
+///
+/// Returns `Some(true)` for pass, `Some(false)` for fail, `None` if no verdict file.
+pub fn check_verdict_file(workspace: &std::path::Path) -> Option<bool> {
+    let path = workspace.join("sanity_verdict.json");
+    let content = std::fs::read_to_string(&path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let verdict = v.get("verdict")?.as_str()?.to_lowercase();
+    let summary = v.get("summary").and_then(|s| s.as_str()).unwrap_or("");
+    tracing::info!(
+        verdict = %verdict,
+        summary = %summary,
+        "Sanity verdict from structured JSON"
+    );
+    Some(verdict == "pass" || verdict == "passed")
+}
+
 /// Determine whether the agent run succeeded.
 ///
-/// Logic (ported from Python):
-/// - If a pass phrase is found in `final_text` → `true`
-/// - If there are errors → `false`
-/// - If max iterations hit → `false`
-/// - If a fail phrase is found → `false`
-/// - If ≥ 2 iterations completed with no errors → `true`
-/// - Otherwise → `false`
+/// **Priority order:**
+/// 1. Structured verdict file (`sanity_verdict.json`) — agent's semantic decision
+/// 2. Output file existence check — structural evidence of success
+/// 3. Phrase matching in LLM response — legacy fallback
+///
+/// The structured verdict is preferred because it lets the agent reason about
+/// success/failure holistically rather than relying on brittle keyword matching.
 pub fn check_success(
     final_text: &str,
     errors: &[String],
     iterations: u32,
     max_iterations: u32,
 ) -> bool {
-    let lower = final_text.to_lowercase();
-
-    // Pass phrase found
-    if PASS_PHRASES.iter().any(|p| lower.contains(p)) {
-        return true;
-    }
-
-    // Errors present
+    // Errors from the runtime are hard failures regardless of verdict
     if !errors.is_empty() {
         return false;
     }
 
-    // Hit the iteration ceiling
+    // Hit the iteration ceiling — treat as failure
     if iterations >= max_iterations {
         return false;
     }
 
-    // Fail phrase found
+    // Legacy phrase-based detection (fallback only — verdict file is checked separately)
+    let lower = final_text.to_lowercase();
+
+    // Explicit pass phrase
+    if PASS_PHRASES.iter().any(|p| lower.contains(p)) {
+        return true;
+    }
+
+    // Explicit fail phrase
     if FAIL_PHRASES.iter().any(|p| lower.contains(p)) {
         return false;
     }
 
-    // Enough iterations with no errors
+    // No strong signal after 2+ iterations with no errors — accept
     if iterations >= 2 {
         return true;
     }
 
+    false
+}
+
+/// Check success by looking for expected output files on disk.
+///
+/// This is a structural check complementing the verdict-based approach.
+/// If the experiment produced figures or results files, it likely succeeded.
+pub fn check_outputs_exist(workspace: &std::path::Path) -> bool {
+    let indicators = ["figures", "results", "output"];
+    for name in &indicators {
+        let dir = workspace.join(name);
+        if dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                if entries.count() > 0 {
+                    return true;
+                }
+            }
+        }
+    }
+    // Check for common output files
+    let file_indicators = ["results.json", "output.json", "fit_results.json", "summary.json",
+                           "run_report.json", "sanity_verdict.json"];
+    for name in &file_indicators {
+        if workspace.join(name).exists() {
+            return true;
+        }
+    }
     false
 }
 

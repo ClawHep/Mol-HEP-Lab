@@ -225,43 +225,43 @@ mod tests {
         // No checkpoint yet.
         assert!(read_checkpoint(run_dir).await.unwrap().is_none());
 
-        write_checkpoint(run_dir, Stage::HypothesisGen, "run-001", StageStatus::Done)
+        write_checkpoint(run_dir, Stage::SynthesisHypotheses, "run-001", StageStatus::Done)
             .await
             .unwrap();
 
         let cp = read_checkpoint(run_dir).await.unwrap().unwrap();
-        assert_eq!(cp.0, Stage::HypothesisGen);
+        assert_eq!(cp.0, Stage::SynthesisHypotheses);
         assert_eq!(cp.1, StageStatus::Done);
     }
 
     #[tokio::test]
     async fn resume_advances_one_step() {
-        let cp = (Stage::HypothesisGen, StageStatus::Done);
+        let cp = (Stage::SynthesisHypotheses, StageStatus::Done);
         let next = resume_from_checkpoint(cp);
         assert_eq!(next, Stage::ExperimentDesign);
     }
 
     #[tokio::test]
     async fn resume_from_last_stage_returns_last() {
-        let cp = (Stage::CitationVerify, StageStatus::Done);
+        let cp = (Stage::Publish, StageStatus::Done);
         let next = resume_from_checkpoint(cp);
-        // No stage after CitationVerify → returns same stage
-        assert_eq!(next, Stage::CitationVerify);
+        // No stage after Publish → returns same stage
+        assert_eq!(next, Stage::Publish);
     }
 
     #[tokio::test]
     async fn write_heartbeat_creates_file() {
         let dir = TempDir::new().unwrap();
-        write_heartbeat(dir.path(), Stage::ExperimentRun, "run-hb", "running", 42.5)
+        write_heartbeat(dir.path(), Stage::ExperimentCycle, "run-hb", "running", 42.5)
             .await
             .unwrap();
         let content = tokio::fs::read_to_string(dir.path().join("heartbeat.json"))
             .await
             .unwrap();
         let record: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert_eq!(record["last_stage"], 14);
-        assert_eq!(record["last_stage_name"], "EXPERIMENT_RUN");
-        assert_eq!(record["phase_label"], "3.6 Experiment Run");
+        assert_eq!(record["last_stage"], 10);
+        assert_eq!(record["last_stage_name"], "EXPERIMENT_CYCLE");
+        assert_eq!(record["phase_label"], "3.4 Experiment Cycle");
         assert_eq!(record["status"], "running");
         assert_eq!(record["elapsed_secs"], 42.5);
         assert_eq!(record["run_id"], "run-hb");

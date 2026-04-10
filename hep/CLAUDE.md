@@ -28,18 +28,18 @@ hep/
 
 ## Pipeline structure
 
-The pipeline uses a unified 5-phase / 26-step structure. Each step is
-addressed as `Phase.Step` (e.g. "3.4" = Phase 3 Processing, step 4 Sanity Check).
+The pipeline uses a unified 5-phase / 18-stage structure. Each stage is
+addressed as `Phase.Step` (e.g. "3.3" = Phase 3 Execution, step 3 Code Develop).
 
-| Phase | Steps | Key Artifacts |
+| Phase | Stages | Key Artifacts |
 |---|---|---|
-| 1. Strategy | 1.1 Topic Init, 1.2 Problem Decompose | STRATEGY.md, goal.md |
-| 2. Exploration | 2.1–2.6 (Search → Hypothesis Gen) | data inventory, variable ranking |
-| 3. Processing | 3.1–3.7 (Design → Iterative Refine) | selection code, background model |
+| 1. Strategy | 1.1 Topic Init, 1.2 Problem Decompose | goal.md, problem_tree.md |
+| 2. Exploration | 2.1–2.4 (Literature Search → Synthesis & Hypotheses) | candidates, knowledge_cards, hypotheses |
+| 3. Execution | 3.1–3.4 (Design → Experiment Cycle) | experiment code, run results |
 | 4. Inference | 4.1–4.3 (Analysis → Knowledge Summary) | fit results, systematics table |
-| 5. Documentation | 5.1–5.8 (Outline → Citation Verify) | analysis note, paper_draft.md |
+| 5. Documentation | 5.1–5.5 (Outline → Publish) | paper_draft.md, paper.tex |
 
-Review gates: 2.3 Literature Screen, 3.1 Experiment Design, 5.5 Quality Gate.
+Review gates: 2.2 Literature Screen, 3.1 Experiment Design, 5.4 Quality Gate.
 
 ## HEP-specific tools
 

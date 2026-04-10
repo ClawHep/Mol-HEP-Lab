@@ -45,6 +45,11 @@ recommendations.
 {{ downscoping }}
 {% endif %}
 
+{% if dependency_graph %}
+## Phase Dependency Graph
+{{ dependency_graph }}
+{% endif %}
+
 ---user---
 
 Make a strategic research decision based on the experiment results.

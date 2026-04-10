@@ -56,6 +56,21 @@ Paper draft: {{ paper_draft | default(value="") }}
 Experiment plan: {{ exp_plan | default(value="") }}
 Experiment summary: {{ experiment_summary | default(value="") }}
 
+## Experiment Context (READ-ONLY — verify paper claims against these)
+
+<experiment_code>
+{{ experiment_code | default(value="(not available)") }}
+</experiment_code>
+
+<run_report>
+{{ run_report | default(value="(not available)") }}
+</run_report>
+
+When reviewing, cross-reference every numerical claim in the paper against the
+experiment code output and run report above. Flag discrepancies as Category A
+(fabrication) findings. For issues that require code changes (not just text edits),
+explicitly note "REQUIRES CODE CHANGE" in the required_action field.
+
 Review criteria for HEP analyses:
 
 **Physics Validity:**

@@ -495,27 +495,22 @@ fn stage_name(stage_num: u32) -> &'static str {
     match stage_num {
         1 => "topic_init",
         2 => "problem_decompose",
-        3 => "search_strategy",
-        4 => "literature_collect",
-        5 => "literature_screen",
-        6 => "knowledge_extract",
-        7 => "synthesis",
-        8 => "hypothesis_gen",
-        9 => "experiment_design",
-        10 => "code_generation",
-        11 => "resource_planning",
-        12 => "experiment_run",
-        13 => "iterative_refine",
-        14 => "result_analysis",
-        15 => "research_decision",
-        16 => "paper_outline",
-        17 => "paper_draft",
-        18 => "peer_review",
-        19 => "paper_revision",
-        20 => "quality_gate",
-        21 => "knowledge_archive",
-        22 => "export_publish",
-        23 => "citation_verify",
+        3 => "literature_search",
+        4 => "literature_screen",
+        5 => "knowledge_extract",
+        6 => "synthesis_hypotheses",
+        7 => "experiment_design",
+        8 => "codebase_search",
+        9 => "code_develop",
+        10 => "experiment_cycle",
+        11 => "result_analysis",
+        12 => "research_decision",
+        13 => "knowledge_summary",
+        14 => "paper_outline",
+        15 => "paper_write",
+        16 => "peer_review",
+        17 => "quality_gate",
+        18 => "publish",
         _ => "unknown_stage",
     }
 }
@@ -530,9 +525,11 @@ fn classify_stage_failure(
     // Category heuristics based on stage semantics and status keywords.
     let category = match stage_num {
         // Literature and search stages
-        3..=6 | 23 => LessonCategory::Methodology,
+        3..=5 => LessonCategory::Methodology,
+        // Synthesis and hypotheses
+        6 => LessonCategory::DataHandling,
         // Experiment stages — inspect status for more specific classification
-        9 | 10 | 12 | 13 => {
+        7 | 9 | 10 => {
             if status_lower.contains("syntax")
                 || status_lower.contains("import")
                 || status_lower.contains("compile")
@@ -548,14 +545,14 @@ fn classify_stage_failure(
                 LessonCategory::ExperimentDesign
             }
         }
-        // Resource planning
-        11 => LessonCategory::ResourceManagement,
+        // Codebase search
+        8 => LessonCategory::CodeGeneration,
         // Analysis and decision stages
-        14 | 15 => LessonCategory::Methodology,
+        11 | 12 | 13 => LessonCategory::Methodology,
         // Writing stages
-        16..=20 => LessonCategory::Writing,
-        // Topic / synthesis / hypothesis stages
-        1 | 2 | 7 | 8 => LessonCategory::DataHandling,
+        14..=18 => LessonCategory::Writing,
+        // Topic stages
+        1 | 2 => LessonCategory::DataHandling,
         // Default: configuration
         _ => LessonCategory::Configuration,
     };

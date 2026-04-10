@@ -69,7 +69,7 @@ Loop until PASS, ESCALATE, or max iterations:
 3. **Spawn physics-reviewer, critical-reviewer, and constructive-reviewer in parallel** via SendMessage. If this phase has figures, also spawn **plot-validator** in parallel with the three reviewers:
 
    Physics reviewer instructions:
-   - Read: `src/methodology/03-phases.md` (review focus for this phase), the artifact under review, upstream artifacts, experiment log
+   - Read: `hep/methodology/03-phases.md` (review focus for this phase), the artifact under review, upstream artifacts, experiment log
    - Evaluate physics correctness: signal model assumptions, background treatment, kinematic reasoning, systematic uncertainty coverage, statistical methodology
    - Classify every issue as (A) must resolve, (B) should address, (C) suggestion
    - Write output to: `review/physics/{REVIEW}.md` with session-named filename
