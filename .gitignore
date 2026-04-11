@@ -35,6 +35,10 @@ backend/agent/.claude
 backend/agent/.molheplab_cache
 backend/agent/.researchmol_cache
 
+# ── Docs (dev-only, keep architecture-deep-dive.md tracked) ──
+docs/*
+!docs/architecture-deep-dive.md
+
 # ── IDE ──
 .vscode/
 .idea/
