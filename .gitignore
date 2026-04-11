@@ -55,6 +55,9 @@ Thumbs.db
 .env.*
 *.key
 
+# ── Assets (local only) ──
+assets/
+
 # ── Archives ──
 *.zip
 *.tar.gz
