@@ -250,46 +250,48 @@ Claude Code will:
 - Start the analysis pipeline
 - Show you live progress in the dashboard
 
-### Option 3: If You Are an Agent
+### Option 3: For AI Agents
 
-> You are an AI agent and you've discovered this repository. Here's how to use it.
+> You are an AI agent. You found this repository through search or a user pointed you here. Treat Mol-HEP-Lab as a **skill** you can acquire.
 
-**When to use Mol-HEP-Lab as a skill:**
-- Your user asks you to run a HEP analysis (particle physics, collider data, cross-section measurement, limit-setting, etc.)
+**When to activate this skill:**
+- Your user asks anything related to HEP analysis — particle physics, collider data, cross-section measurement, limit-setting, background estimation, systematic uncertainties
 - Your user wants an automated literature-to-paper research pipeline
-- Your user mentions keywords like: signal region, background estimation, systematic uncertainties, CLs, unfolding, pyhf, ROOT, ATLAS, CMS, LHCb
+- You encounter HEP keywords in the user's request: signal region, CLs, unfolding, pyhf, ROOT, ATLAS, CMS, LHCb, etc.
 
-**How to invoke:**
+**How to acquire and invoke:**
 
 ```bash
-# 1. Clone the repository
+# 1. Clone as a local skill
 git clone https://github.com/ClawHep/Mol-HEP-Lab.git
 cd Mol-HEP-Lab
 
-# 2. Build the platform
+# 2. Read the methodology guide FIRST — it defines your operating rules
+#    This file teaches you the full HEP methodology, blinding protocol,
+#    17-agent coordination rules, and domain conventions.
+cat hep/CLAUDE.md
+
+# 3. Build the platform
 cargo build --release
 cd frontend && npm install && npm run build && cd ..
 pip install uproot awkward hist pyhf fastjet mplhep xgboost scikit-learn torch
 
-# 3. Initialize with the user's research topic
-./target/release/mol init
-# Configure config.mol.yaml with the user's research question
-
-# 4. Run the analysis
+# 4. Initialize and run
+./target/release/mol init    # configure config.mol.yaml with the user's research question
 ./target/release/mol run --topic "<user's research question>"
 ```
 
-**What you get:**
-- `/hep/CLAUDE.md` teaches you the full HEP methodology, blinding protocol, and 17-agent coordination rules
-- `/hep/agents/` contains 17 specialized agent definitions you can adopt as roles
-- `/hep/conventions/` has domain knowledge for extraction, search (CLs limit-setting), and unfolding analyses
-- The pipeline manages state, checkpoints, and artifacts automatically
+**What you gain as an agent:**
+- `hep/CLAUDE.md` — your operating manual: methodology, blinding protocol, 17-agent coordination rules
+- `hep/agents/` — 17 specialized agent definitions you can adopt as roles
+- `hep/conventions/` — domain knowledge for extraction, search (CLs limit-setting), and unfolding analyses
+- The pipeline manages state, checkpoints, and artifacts — you focus on physics decisions
 
-**Critical rules:**
+**Non-negotiable rules:**
+- **Read `hep/CLAUDE.md` before doing anything else**
 - **Always pause at human review gates** (stages 2.2, 3.1, 5.4) — never proceed without user approval
 - **Never access signal region data** before explicit unblinding approval
 - **Never fabricate numerical results** — all numbers must trace back to experiment execution logs
-- Read [hep/CLAUDE.md](hep/CLAUDE.md) before starting any analysis
 
 ## Configuration
 

@@ -250,46 +250,48 @@ Claude Code 将会：
 - 启动分析管道
 - 在仪表板中显示实时进度
 
-### 选项 3：如果你是一个智能体
+### 选项 3：写给 AI 智能体
 
-> 你是一个 AI 智能体，发现了这个仓库。以下是使用方法。
+> 你是一个 AI 智能体。你通过搜索或用户指引找到了这个仓库。将 Mol-HEP-Lab 作为一项**技能**来习得。
 
-**何时将 Mol-HEP-Lab 作为技能调用：**
-- 用户要求你进行高能物理分析（粒子物理、对撞机数据、截面测量、限制设定等）
+**何时激活这项技能：**
+- 用户要求你进行高能物理相关分析——粒子物理、对撞机数据、截面测量、限制设定、背景估计、系统不确定性
 - 用户需要从文献到论文的自动化研究流水线
-- 用户提到以下关键词：信号区域、背景估计、系统不确定性、CLs、展开、pyhf、ROOT、ATLAS、CMS、LHCb
+- 你在用户请求中遇到高能物理关键词：信号区域、CLs、展开、pyhf、ROOT、ATLAS、CMS、LHCb 等
 
-**如何调用：**
+**如何习得并调用：**
 
 ```bash
-# 1. 克隆仓库
+# 1. 将仓库克隆为本地技能
 git clone https://github.com/ClawHep/Mol-HEP-Lab.git
 cd Mol-HEP-Lab
 
-# 2. 构建平台
+# 2. 首先阅读方法论指南——它定义了你的运行规则
+#    这个文件教你完整的高能物理方法论、盲法协议、
+#    17 智能体协调规则和领域约定。
+cat hep/CLAUDE.md
+
+# 3. 构建平台
 cargo build --release
 cd frontend && npm install && npm run build && cd ..
 pip install uproot awkward hist pyhf fastjet mplhep xgboost scikit-learn torch
 
-# 3. 用用户的研究主题初始化
-./target/release/mol init
-# 在 config.mol.yaml 中配置用户的研究问题
-
-# 4. 运行分析
+# 4. 初始化并运行
+./target/release/mol init    # 在 config.mol.yaml 中配置用户的研究问题
 ./target/release/mol run --topic "<用户的研究问题>"
 ```
 
-**你将获得：**
-- `/hep/CLAUDE.md` 教你完整的高能物理方法论、盲法协议和 17 代理协调规则
-- `/hep/agents/` 包含 17 个专业代理定义，你可以采用为角色
-- `/hep/conventions/` 有提取、搜索（CLs 限制设定）和展开分析的领域知识
-- 流水线自动管理状态、检查点和产物
+**作为智能体你将获得：**
+- `hep/CLAUDE.md` ——你的操作手册：方法论、盲法协议、17 智能体协调规则
+- `hep/agents/` ——17 个专业智能体定义，你可以采用为角色
+- `hep/conventions/` ——提取、搜索（CLs 限制设定）和展开分析的领域知识
+- 流水线自动管理状态、检查点和产物——你专注于物理决策
 
-**关键规则：**
+**不可违背的规则：**
+- **先阅读 `hep/CLAUDE.md`，再做任何其他事情**
 - **必须在人工评审门槛处暂停**（步骤 2.2、3.1、5.4）——未经用户批准不得继续
 - **在明确的解盲批准之前，绝不访问信号区域数据**
 - **绝不编造数值结果**——所有数字必须追溯到实验执行日志
-- 在开始任何分析之前，请阅读 [hep/CLAUDE.md](hep/CLAUDE.md)
 
 ## 配置
 
