@@ -55,8 +55,8 @@ Thumbs.db
 .env.*
 *.key
 
-# ── Assets (local only) ──
-assets/
+# ── Assets ──
+# assets/ is now tracked
 
 # ── Archives ──
 *.zip

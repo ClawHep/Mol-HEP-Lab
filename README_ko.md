@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/fig_radar_overview.png" alt="Mol-HEP-Lab 개요" width="720">
+</p>
+
 <p align="center"><a href="README.md">English</a> · <a href="README_zh.md">中文</a> · <a href="README_ko.md">한국어</a></p>
 
 <h1 align="center">Mol-HEP-Lab</h1>
